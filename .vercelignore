@@ -1,0 +1,8 @@
+backend/
+training/
+tests/
+artifacts/
+pyproject.toml
+Procfile
+railway.json
+*.py
