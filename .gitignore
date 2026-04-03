@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+cannon_project.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment (secrets)
+.env
+.env.local
+.env.production.local
+
+# ML artifacts (too large for git)
+artifacts/models/
+artifacts/data/raw/
+artifacts/data/labeled/
+artifacts/data/al_queue/
+artifacts/reports/
+
+# Keep directory structure
+!artifacts/models/.gitkeep
+!artifacts/data/raw/.gitkeep
+!artifacts/data/labeled/.gitkeep
+!artifacts/data/al_queue/.gitkeep
+!artifacts/reports/.gitkeep
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Claude
+.claude/
+ANTIGRAVITY_SESSION.md
