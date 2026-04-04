@@ -63,6 +63,8 @@ export const api = {
     classifier_key: string
     test_images_dir: string
   }) => http.post('/models/compare', data),
+  compareModelsUpload: (formData: FormData) =>
+    http.post('/models/compare-upload', formData),
 
   // Metrics
   getMetrics: () => http.get('/metrics/summary'),

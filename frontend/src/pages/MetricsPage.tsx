@@ -6,8 +6,10 @@ import {
 import { useWebSocket } from '../api/wsClient'
 import { useMetricsStore } from '../store'
 import type { MetricsSnapshot } from '../types'
+import { useTheme } from '../hooks/useTheme'
 
 export default function MetricsPage() {
+  const t = useTheme()
   const { current, history, updateMetrics } = useMetricsStore()
 
   const handleMetrics = useCallback((data: unknown) => {
@@ -24,107 +26,96 @@ export default function MetricsPage() {
     gate_pass: +(s.gate_pass_rate * 100).toFixed(1),
   }))
 
-  const METRICS_CARDS = current
-    ? [
-        { label: 'Accuracy', value: `${(current.accuracy * 100).toFixed(1)}%`, color: 'text-emerald-400' },
-        { label: 'F1 (macro)', value: `${(current.f1 * 100).toFixed(1)}%`, color: 'text-blue-400' },
-        { label: 'Precision', value: `${(current.precision * 100).toFixed(1)}%`, color: 'text-violet-400' },
-        { label: 'Recall', value: `${(current.recall * 100).toFixed(1)}%`, color: 'text-amber-400' },
-        { label: 'Avg Latency', value: `${current.avg_latency_ms.toFixed(1)}ms`, color: 'text-orange-400' },
-        { label: 'P95 Latency', value: `${current.p95_latency_ms.toFixed(1)}ms`, color: 'text-red-400' },
-        { label: 'Gate Pass', value: `${(current.gate_pass_rate * 100).toFixed(1)}%`, color: 'text-cyan-400' },
-        { label: 'AL Queue', value: `${current.al_queue_size}`, color: 'text-pink-400' },
-        { label: 'Confirmed', value: `${current.confirmed_count}`, color: 'text-emerald-400' },
-      ]
-    : []
+  const CARDS = current ? [
+    { label: 'Accuracy', value: `${(current.accuracy * 100).toFixed(1)}%`, color: t.colors.success },
+    { label: 'F1', value: `${(current.f1 * 100).toFixed(1)}%`, color: t.colors.info },
+    { label: 'Precision', value: `${(current.precision * 100).toFixed(1)}%`, color: '#a78bfa' },
+    { label: 'Recall', value: `${(current.recall * 100).toFixed(1)}%`, color: t.colors.warning },
+    { label: 'Latency', value: `${current.avg_latency_ms.toFixed(1)}ms`, color: '#fb923c' },
+    { label: 'P95', value: `${current.p95_latency_ms.toFixed(1)}ms`, color: t.colors.danger },
+    { label: 'Gate', value: `${(current.gate_pass_rate * 100).toFixed(1)}%`, color: '#22d3ee' },
+    { label: 'AL', value: `${current.al_queue_size}`, color: '#f472b6' },
+    { label: 'Confirmed', value: `${current.confirmed_count}`, color: t.colors.success },
+  ] : []
 
-  const chartStyle = {
-    grid: '#1a2332',
-    tick: { fontSize: 10, fill: '#64748b' },
-    tooltip: { background: '#111827', border: '1px solid #1e293b', fontSize: 11 },
-  }
+  const chartTick = { fontSize: 10, fill: t.colors.textDim }
+  const chartTooltip = { background: t.colors.bgPanel, border: `1px solid ${t.colors.border}`, fontSize: 11, color: t.colors.text }
 
   return (
-    <div className="p-5 space-y-4">
-      {/* 지표 카드 */}
-      <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-2">
-        {METRICS_CARDS.map(({ label, value, color }) => (
-          <div key={label} className="panel p-3 text-center">
-            <p className="text-[10px] text-slate-500 mb-1">{label}</p>
-            <p className={`text-base font-bold font-mono ${color}`}>{value}</p>
+    <div className="h-full overflow-y-auto p-4 space-y-3">
+      {/* Cards */}
+      <div className="grid grid-cols-9 gap-1.5">
+        {CARDS.map(({ label, value, color }) => (
+          <div key={label} className="rounded p-2 text-center" style={{ background: t.colors.bgPanel, border: `1px solid ${t.colors.border}` }}>
+            <p style={{ fontSize: 9, color: t.colors.textDim, marginBottom: 2 }}>{label}</p>
+            <p style={{ fontSize: 15, fontWeight: 700, fontFamily: 'monospace', color }}>{value}</p>
           </div>
         ))}
         {!current && (
-          <div className="col-span-full text-center text-slate-600 py-8 text-xs">
+          <div className="col-span-9 text-center py-6" style={{ fontSize: 11, color: t.colors.textDim }}>
             메트릭 데이터 수집 대기 중
           </div>
         )}
       </div>
 
-      {/* 차트 */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="panel p-4">
-          <h3 className="panel-header mb-4">Accuracy / F1 Trend</h3>
-          <ResponsiveContainer width="100%" height={200}>
+      {/* Charts */}
+      <div className="grid grid-cols-2 gap-3">
+        <ChartCard t={t} title="Accuracy / F1">
+          <ResponsiveContainer width="100%" height={180}>
             <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke={chartStyle.grid} />
-              <XAxis dataKey="t" tick={chartStyle.tick} />
-              <YAxis domain={[0, 100]} tick={chartStyle.tick} />
-              <Tooltip contentStyle={chartStyle.tooltip} />
-              <Line type="monotone" dataKey="accuracy" stroke="#34d399" dot={false} strokeWidth={1.5} name="Accuracy" />
-              <Line type="monotone" dataKey="f1" stroke="#60a5fa" dot={false} strokeWidth={1.5} name="F1" />
+              <CartesianGrid strokeDasharray="3 3" stroke={t.colors.border} />
+              <XAxis dataKey="t" tick={chartTick} />
+              <YAxis domain={[0, 100]} tick={chartTick} />
+              <Tooltip contentStyle={chartTooltip} />
+              <Line type="monotone" dataKey="accuracy" stroke={t.colors.success} dot={false} strokeWidth={1.5} name="Accuracy" />
+              <Line type="monotone" dataKey="f1" stroke={t.colors.info} dot={false} strokeWidth={1.5} name="F1" />
             </LineChart>
           </ResponsiveContainer>
-        </div>
+        </ChartCard>
 
-        <div className="panel p-4">
-          <h3 className="panel-header mb-4">Latency Trend (ms)</h3>
-          <ResponsiveContainer width="100%" height={200}>
+        <ChartCard t={t} title="Latency (ms)">
+          <ResponsiveContainer width="100%" height={180}>
             <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke={chartStyle.grid} />
-              <XAxis dataKey="t" tick={chartStyle.tick} />
-              <YAxis tick={chartStyle.tick} />
-              <Tooltip contentStyle={chartStyle.tooltip} />
+              <CartesianGrid strokeDasharray="3 3" stroke={t.colors.border} />
+              <XAxis dataKey="t" tick={chartTick} />
+              <YAxis tick={chartTick} />
+              <Tooltip contentStyle={chartTooltip} />
               <Line type="monotone" dataKey="latency" stroke="#fb923c" dot={false} strokeWidth={1.5} name="Avg Latency" />
             </LineChart>
           </ResponsiveContainer>
-        </div>
+        </ChartCard>
 
-        <div className="panel p-4">
-          <h3 className="panel-header mb-4">Gate Pass Rate</h3>
-          <ResponsiveContainer width="100%" height={200}>
+        <ChartCard t={t} title="Gate Pass Rate">
+          <ResponsiveContainer width="100%" height={180}>
             <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke={chartStyle.grid} />
-              <XAxis dataKey="t" tick={chartStyle.tick} />
-              <YAxis domain={[0, 100]} tick={chartStyle.tick} />
-              <Tooltip contentStyle={chartStyle.tooltip} />
+              <CartesianGrid strokeDasharray="3 3" stroke={t.colors.border} />
+              <XAxis dataKey="t" tick={chartTick} />
+              <YAxis domain={[0, 100]} tick={chartTick} />
+              <Tooltip contentStyle={chartTooltip} />
               <Line type="monotone" dataKey="gate_pass" stroke="#22d3ee" dot={false} strokeWidth={1.5} name="Gate Pass%" />
             </LineChart>
           </ResponsiveContainer>
-        </div>
+        </ChartCard>
 
         {/* Confusion Matrix */}
-        <div className="panel p-4">
-          <h3 className="panel-header mb-4">Confusion Matrix</h3>
+        <ChartCard t={t} title="Confusion Matrix">
           {current?.confusion_matrix && current.confusion_matrix.length > 0 ? (
-            <div className="inline-grid gap-0.5 text-center text-[11px]"
-                 style={{ gridTemplateColumns: `40px repeat(${current.confusion_matrix.length}, 1fr)` }}>
+            <div className="inline-grid gap-px" style={{ gridTemplateColumns: `32px repeat(${current.confusion_matrix.length}, 1fr)` }}>
               <div />
               {current.confusion_matrix.map((_, i) => (
-                <div key={`h-${i}`} className="text-slate-500 font-mono font-medium py-1 px-2">T{i + 1}</div>
+                <div key={`h-${i}`} style={{ fontSize: 10, fontFamily: 'monospace', color: t.colors.textMuted, textAlign: 'center', padding: 4 }}>T{i + 1}</div>
               ))}
               {current.confusion_matrix.map((row, i) => (
                 <>
-                  <div key={`l-${i}`} className="text-slate-500 font-mono font-medium flex items-center justify-center">T{i + 1}</div>
+                  <div key={`l-${i}`} className="flex items-center justify-center" style={{ fontSize: 10, fontFamily: 'monospace', color: t.colors.textMuted }}>T{i + 1}</div>
                   {row.map((val, j) => (
-                    <div
-                      key={`${i}-${j}`}
-                      className={`py-1.5 px-2 rounded font-mono ${
-                        i === j
-                          ? val > 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-[#0f172a] text-slate-600'
-                          : val > 0 ? 'bg-red-500/15 text-red-400' : 'bg-[#0f172a] text-slate-700'
-                      }`}
-                    >
+                    <div key={`${i}-${j}`} className="text-center rounded" style={{
+                      padding: 4,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      background: i === j ? (val > 0 ? t.colors.success + '20' : t.colors.bgInput) : (val > 0 ? t.colors.danger + '20' : t.colors.bgInput),
+                      color: i === j ? (val > 0 ? t.colors.success : t.colors.textDim) : (val > 0 ? t.colors.danger : t.colors.textDim),
+                    }}>
                       {val}
                     </div>
                   ))}
@@ -132,12 +123,21 @@ export default function MetricsPage() {
               ))}
             </div>
           ) : (
-            <div className="text-center text-slate-600 py-8 text-xs">
+            <div className="text-center py-6" style={{ fontSize: 11, color: t.colors.textDim }}>
               데이터 수집 후 표시됩니다
             </div>
           )}
-        </div>
+        </ChartCard>
       </div>
+    </div>
+  )
+}
+
+function ChartCard({ t, title, children }: { t: ReturnType<typeof useTheme>; title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded p-3" style={{ background: t.colors.bgPanel, border: `1px solid ${t.colors.border}` }}>
+      <div style={t.sectionHeader} className="mb-3">{title}</div>
+      {children}
     </div>
   )
 }

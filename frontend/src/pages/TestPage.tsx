@@ -1,11 +1,13 @@
 import { useState, useCallback } from 'react'
-import { Upload, Play, Image } from 'lucide-react'
+import { Play, Image } from 'lucide-react'
 import { api } from '../api/httpClient'
 import type { InferenceResult } from '../types'
 import SequenceIndicator from '../components/SequenceIndicator/SequenceIndicator'
 import { useInferenceStore } from '../store'
+import { useTheme } from '../hooks/useTheme'
 
 export default function TestPage() {
+  const t = useTheme()
   const [results, setResults] = useState<InferenceResult[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -33,12 +35,8 @@ export default function TestPage() {
 
   const handlePathStart = async () => {
     if (!filePath) return
-    try {
-      setError(null)
-      await api.startFile(filePath, false)
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '파일 소스 시작 실패')
-    }
+    try { setError(null); await api.startFile(filePath, false) }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : '파일 소스 시작 실패') }
   }
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -47,114 +45,98 @@ export default function TestPage() {
   }, [])
 
   return (
-    <div className="p-5 grid grid-cols-2 gap-4 h-[calc(100vh-44px)]">
-      {/* 입력 */}
-      <div className="flex flex-col gap-3 overflow-y-auto">
-        <div className="panel p-4">
-          <h2 className="panel-header mb-3">테스트 입력</h2>
-          <div className="flex gap-1.5 mb-3">
-            <button
-              onClick={() => setFileMode('upload')}
-              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                fileMode === 'upload'
-                  ? 'bg-blue-600/15 text-blue-400 border border-blue-500/30'
-                  : 'bg-[#1e293b] text-slate-500 border border-transparent'
-              }`}
-            >
-              파일 업로드
-            </button>
-            <button
-              onClick={() => setFileMode('path')}
-              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                fileMode === 'path'
-                  ? 'bg-blue-600/15 text-blue-400 border border-blue-500/30'
-                  : 'bg-[#1e293b] text-slate-500 border border-transparent'
-              }`}
-            >
-              경로 지정
-            </button>
+    <div className="h-full flex gap-px" style={{ background: t.colors.border }}>
+      {/* Left: Input */}
+      <div className="flex flex-col gap-px" style={{ width: 360, background: t.colors.border }}>
+        <div className="p-3" style={{ background: t.colors.bgPanel }}>
+          <div style={t.sectionHeader} className="mb-2">테스트 입력</div>
+          <div className="flex gap-1 mb-2">
+            {(['upload', 'path'] as const).map(m => (
+              <button key={m} onClick={() => setFileMode(m)}
+                style={{
+                  padding: '3px 10px', borderRadius: 3, fontSize: 11, fontWeight: 500,
+                  color: fileMode === m ? t.colors.accent : t.colors.textMuted,
+                  background: fileMode === m ? t.colors.accentMuted : t.colors.bgInput,
+                  border: `1px solid ${fileMode === m ? t.colors.accent + '40' : 'transparent'}`,
+                }}
+              >
+                {m === 'upload' ? '파일 업로드' : '경로 지정'}
+              </button>
+            ))}
           </div>
 
           {fileMode === 'upload' ? (
             <div
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
-              className="border border-dashed border-[#1e293b] rounded-lg p-8 text-center
-                         cursor-pointer hover:border-blue-500/40 transition-colors"
               onClick={() => document.getElementById('file-input')?.click()}
+              className="rounded p-6 text-center cursor-pointer transition-colors"
+              style={{ border: `1px dashed ${t.colors.border}`, background: t.colors.bgDropzone }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = t.colors.accent + '60' }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.colors.border }}
             >
-              <Image className="mx-auto mb-2 text-slate-600" size={28} strokeWidth={1.5} />
-              <p className="text-xs text-slate-500">이미지를 드래그하거나 클릭하여 선택</p>
-              <p className="text-[10px] text-slate-600 mt-1">JPG, PNG | 복수 선택 가능</p>
-              <input
-                id="file-input"
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => handleFileUpload(e.target.files)}
-              />
+              <Image className="mx-auto mb-1" size={24} style={{ color: t.colors.textDim }} strokeWidth={1.5} />
+              <p style={{ fontSize: 11, color: t.colors.textMuted }}>이미지 드래그 또는 클릭</p>
+              <p style={{ fontSize: 10, color: t.colors.textDim, marginTop: 2 }}>JPG, PNG | 복수 선택 가능</p>
+              <input id="file-input" type="file" accept="image/*" multiple className="hidden"
+                onChange={(e) => handleFileUpload(e.target.files)} />
             </div>
           ) : (
             <div className="space-y-2">
-              <input
-                type="text"
-                value={filePath}
-                onChange={(e) => setFilePath(e.target.value)}
-                placeholder="이미지/영상 파일 경로 또는 디렉터리"
-                className="input text-xs"
-              />
-              <button onClick={handlePathStart} className="btn-primary">
-                <Play size={12} /> 시작
+              <input type="text" value={filePath} onChange={(e) => setFilePath(e.target.value)}
+                placeholder="이미지/영상 파일 경로" style={t.input} />
+              <button onClick={handlePathStart} style={t.btnPrimary}>
+                <Play size={11} /> 시작
               </button>
             </div>
           )}
 
-          {loading && <p className="mt-2 text-[11px] text-blue-400 animate-pulse">추론 중...</p>}
-          {error && <p className="mt-2 text-[11px] text-red-400">{error}</p>}
+          {loading && <p style={{ fontSize: 11, color: t.colors.accent, marginTop: 4 }} className="animate-pulse">추론 중...</p>}
+          {error && <p style={{ fontSize: 11, color: t.colors.danger, marginTop: 4 }}>{error}</p>}
         </div>
 
-        <SequenceIndicator currentState={sequenceState} lastResult={null} />
+        <div className="p-3" style={{ background: t.colors.bgPanel }}>
+          <SequenceIndicator currentState={sequenceState} lastResult={null} />
+        </div>
+
+        <div className="flex-1" style={{ background: t.colors.bgPanel }} />
       </div>
 
-      {/* 결과 목록 */}
-      <div className="panel overflow-hidden flex flex-col">
-        <div className="px-4 py-3 border-b border-[#1e293b] flex items-center justify-between shrink-0">
-          <h2 className="panel-header">추론 결과</h2>
-          <span className="text-[10px] text-slate-600 font-mono">{results.length}건</span>
+      {/* Right: Results */}
+      <div className="flex-1 flex flex-col" style={{ background: t.colors.bgPanel }}>
+        <div className="px-3 py-2 flex items-center justify-between shrink-0" style={{ borderBottom: `1px solid ${t.colors.border}` }}>
+          <div style={t.sectionHeader}>추론 결과</div>
+          <span style={{ fontSize: 10, color: t.colors.textDim, fontFamily: 'monospace' }}>{results.length}건</span>
         </div>
-        <div className="overflow-y-auto flex-1">
+        <div className="flex-1 overflow-y-auto">
           {results.length === 0 ? (
-            <div className="p-8 text-center text-slate-600 text-xs">
+            <div className="p-6 text-center" style={{ fontSize: 11, color: t.colors.textDim }}>
               이미지를 업로드하면 결과가 표시됩니다
             </div>
           ) : (
             results.map((r, i) => (
-              <div key={r.frame_id} className="px-4 py-3 border-b border-[#1e293b] hover:bg-[#0f172a] transition-colors">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[10px] font-mono text-slate-600">#{results.length - i}</span>
-                  <span className={`badge ${
-                    r.is_confirmed
-                      ? 'badge-success'
-                      : r.gate?.is_target
-                      ? 'badge-info'
-                      : 'badge-neutral'
-                  }`}>
+              <div key={r.frame_id} className="px-3 py-2 transition-colors"
+                   style={{ borderBottom: `1px solid ${t.colors.border}` }}
+                   onMouseEnter={(e) => { e.currentTarget.style.background = t.colors.bgHover }}
+                   onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span style={{ fontSize: 10, fontFamily: 'monospace', color: t.colors.textDim }}>#{results.length - i}</span>
+                  <span style={t.badge(r.is_confirmed ? 'success' : r.gate?.is_target ? 'info' : 'neutral')}>
                     {r.is_confirmed ? 'CONFIRMED' : r.gate?.is_target ? 'GATE PASS' : 'OOD'}
                   </span>
                 </div>
                 {r.classify && (
-                  <div className="text-xs">
-                    <span className="text-blue-400 font-medium font-mono">T{r.classify.target_id}</span>
-                    <span className="text-slate-500 ml-2">
+                  <div style={{ fontSize: 11 }}>
+                    <span style={{ color: t.colors.info, fontWeight: 500, fontFamily: 'monospace' }}>T{r.classify.target_id}</span>
+                    <span style={{ color: t.colors.textMuted, marginLeft: 6 }}>
                       {(r.classify.confidence * 100).toFixed(1)}%
                     </span>
                     {r.classify.is_uncertain && (
-                      <span className="ml-2 badge badge-warning">AL</span>
+                      <span style={{ ...t.badge('warning'), marginLeft: 6 }}>AL</span>
                     )}
                   </div>
                 )}
-                <div className="text-[10px] text-slate-600 mt-1 font-mono">
+                <div style={{ fontSize: 10, color: t.colors.textDim, fontFamily: 'monospace', marginTop: 2 }}>
                   {r.total_latency_ms.toFixed(1)}ms
                 </div>
               </div>

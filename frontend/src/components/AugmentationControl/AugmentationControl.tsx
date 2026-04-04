@@ -1,18 +1,19 @@
 import { useState, useRef, useEffect } from 'react'
 import { Info } from 'lucide-react'
+import { useTheme } from '../../hooks/useTheme'
 import type { AugIntensity, IntensityOption } from '../../types'
 
 const INTENSITY_ORDER: AugIntensity[] = [
   'weak', 'medium_weak', 'medium', 'medium_strong', 'strong', 'extreme',
 ]
 
-const INTENSITY_COLORS: Record<AugIntensity, { base: string; active: string }> = {
-  weak:          { base: 'bg-sky-600/60 border-sky-600/40 hover:bg-sky-600/80', active: 'bg-sky-500 border-sky-400 ring-1 ring-sky-400/40' },
-  medium_weak:   { base: 'bg-teal-600/60 border-teal-600/40 hover:bg-teal-600/80', active: 'bg-teal-500 border-teal-400 ring-1 ring-teal-400/40' },
-  medium:        { base: 'bg-emerald-600/60 border-emerald-600/40 hover:bg-emerald-600/80', active: 'bg-emerald-500 border-emerald-400 ring-1 ring-emerald-400/40' },
-  medium_strong: { base: 'bg-amber-600/60 border-amber-600/40 hover:bg-amber-600/80', active: 'bg-amber-500 border-amber-400 ring-1 ring-amber-400/40' },
-  strong:        { base: 'bg-orange-600/60 border-orange-600/40 hover:bg-orange-600/80', active: 'bg-orange-500 border-orange-400 ring-1 ring-orange-400/40' },
-  extreme:       { base: 'bg-red-700/60 border-red-700/40 hover:bg-red-700/80', active: 'bg-red-600 border-red-400 ring-1 ring-red-400/40' },
+const INTENSITY_HUES: Record<AugIntensity, string> = {
+  weak: '#38bdf8',
+  medium_weak: '#2dd4bf',
+  medium: '#4ade80',
+  medium_strong: '#facc15',
+  strong: '#fb923c',
+  extreme: '#ef4444',
 }
 
 interface Props {
@@ -23,80 +24,69 @@ interface Props {
   onNPerTargetChange: (v: number) => void
 }
 
-function Tooltip({ text, visible }: { text: string; visible: boolean }) {
-  if (!visible) return null
-  return (
-    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-48
-                    bg-[#1e293b] border border-[#334155] rounded
-                    px-2.5 py-1.5 text-[11px] text-slate-300 shadow-lg pointer-events-none">
-      {text}
-      <div className="absolute top-full left-1/2 -translate-x-1/2
-                      border-4 border-transparent border-t-[#334155]" />
-    </div>
-  )
-}
-
 export default function AugmentationControl({
-  intensity,
-  nPerTarget,
-  intensityOptions,
-  onIntensityChange,
-  onNPerTargetChange,
+  intensity, nPerTarget, intensityOptions, onIntensityChange, onNPerTargetChange,
 }: Props) {
+  const t = useTheme()
   const [tooltip, setTooltip] = useState<AugIntensity | null>(null)
-  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const showTooltip = (key: AugIntensity) => {
-    if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current)
-    setTooltip(key)
-  }
+  const show = (key: AugIntensity) => { if (timerRef.current) clearTimeout(timerRef.current); setTooltip(key) }
+  const hide = () => { timerRef.current = setTimeout(() => setTooltip(null), 150) }
 
-  const hideTooltip = () => {
-    tooltipTimerRef.current = setTimeout(() => setTooltip(null), 150)
-  }
-
-  useEffect(() => () => {
-    if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current)
-  }, [])
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 
   return (
-    <div className="space-y-5">
-      {/* 강도 선택 */}
+    <div className="space-y-4">
+      {/* Intensity */}
       <div>
-        <p className="text-[11px] text-slate-500 mb-2">증강 강도</p>
-        <div className="flex flex-wrap gap-1.5">
+        <div style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 6 }}>증강 강도</div>
+        <div className="flex flex-wrap gap-1">
           {INTENSITY_ORDER.map((key) => {
             const opt = intensityOptions[key]
             const isActive = intensity === key
-            const colors = INTENSITY_COLORS[key]
+            const hue = INTENSITY_HUES[key]
 
             return (
               <div key={key} className="relative flex items-center">
                 <button
                   onClick={() => onIntensityChange(key)}
-                  className={`px-2.5 py-1 rounded-l border text-[11px] font-medium
-                              text-white transition-all duration-150 ${
-                                isActive ? colors.active : colors.base
-                              }`}
+                  className="rounded-l transition-all duration-150"
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: isActive ? '#fff' : t.colors.text,
+                    background: isActive ? hue : t.colors.bgInput,
+                    border: `1px solid ${isActive ? hue : t.colors.border}`,
+                    borderRight: 'none',
+                    boxShadow: isActive ? `0 0 6px ${hue}40` : 'none',
+                  }}
                 >
                   {opt?.label ?? key}
                 </button>
-
                 <div
-                  className={`relative px-1 py-1 rounded-r border-y border-r
-                               cursor-pointer transition-colors duration-150
-                               ${isActive
-                                 ? `${colors.active} border-l-0`
-                                 : `${colors.base} border-l-0 opacity-70`}`}
-                  onMouseEnter={() => showTooltip(key)}
-                  onMouseLeave={hideTooltip}
-                  onClick={() => showTooltip(tooltip === key ? null as never : key)}
+                  className="relative rounded-r cursor-pointer transition-colors"
+                  style={{
+                    padding: '3px 4px',
+                    background: isActive ? hue : t.colors.bgInput,
+                    border: `1px solid ${isActive ? hue : t.colors.border}`,
+                    borderLeft: 'none',
+                    opacity: isActive ? 1 : 0.6,
+                  }}
+                  onMouseEnter={() => show(key)}
+                  onMouseLeave={hide}
+                  onClick={() => show(tooltip === key ? null as never : key)}
                 >
-                  <Info size={11} className="text-white/80" />
-                  <Tooltip
-                    text={opt?.description ?? ''}
-                    visible={tooltip === key}
-                  />
+                  <Info size={10} style={{ color: isActive ? '#fff' : t.colors.textMuted }} />
+                  {tooltip === key && opt && (
+                    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-44 rounded px-2 py-1.5 shadow-lg pointer-events-none"
+                         style={{ background: t.colors.bgActivityBar, border: `1px solid ${t.colors.borderLight}`, fontSize: 10, color: t.colors.text }}>
+                      {opt.description}
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent"
+                           style={{ borderTopColor: t.colors.borderLight }} />
+                    </div>
+                  )}
                 </div>
               </div>
             )
@@ -104,47 +94,29 @@ export default function AugmentationControl({
         </div>
 
         {intensity && intensityOptions[intensity] && (
-          <p className="mt-2 text-[11px] text-slate-500">
-            <span className="text-slate-300 font-medium">
-              {intensityOptions[intensity].label}
-            </span>
-            {' -- '}
-            {intensityOptions[intensity].description}
+          <p style={{ marginTop: 6, fontSize: 11, color: t.colors.textMuted }}>
+            <span style={{ color: t.colors.text, fontWeight: 500 }}>{intensityOptions[intensity].label}</span>
+            {' -- '}{intensityOptions[intensity].description}
           </p>
         )}
       </div>
 
-      {/* 타겟당 증강 수 */}
+      {/* Per-target count */}
       <div>
-        <label className="text-[11px] text-slate-500 block mb-1.5">
-          타겟당 증강 수
-        </label>
-        <div className="flex items-center gap-3">
+        <div style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 4 }}>타겟당 증강 수</div>
+        <div className="flex items-center gap-2">
           <input
-            type="range"
-            min={50}
-            max={2000}
-            step={50}
-            value={nPerTarget}
+            type="range" min={50} max={2000} step={50} value={nPerTarget}
             onChange={(e) => onNPerTargetChange(Number(e.target.value))}
             className="flex-1"
           />
           <input
-            type="number"
-            min={10}
-            max={5000}
-            value={nPerTarget}
-            onChange={(e) => {
-              const v = Math.max(10, Math.min(5000, Number(e.target.value)))
-              onNPerTargetChange(v)
-            }}
-            className="input w-16 text-center text-xs"
+            type="number" min={10} max={5000} value={nPerTarget}
+            onChange={(e) => onNPerTargetChange(Math.max(10, Math.min(5000, Number(e.target.value))))}
+            style={{ ...t.input, width: 56, textAlign: 'center' }}
           />
-          <span className="text-[10px] text-slate-600 whitespace-nowrap">/ target</span>
+          <span style={{ fontSize: 10, color: t.colors.textDim }}>/ target</span>
         </div>
-        <p className="mt-1 text-[11px] text-slate-600">
-          총 생성: <span className="text-slate-400 font-mono">targets x {nPerTarget.toLocaleString()}</span>
-        </p>
       </div>
     </div>
   )

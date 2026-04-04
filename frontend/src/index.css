@@ -11,26 +11,31 @@
     padding: 0;
   }
 
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
   html {
-    font-size: 14px;
+    font-size: 13px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    background: #0a0e17;
-    color: #e2e8f0;
-    line-height: 1.5;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+                 Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    line-height: 1.4;
   }
 
-  /* 스크롤바 */
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #4a5568; }
+  ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.35); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.5); }
+  ::-webkit-scrollbar-corner { background: transparent; }
 
-  /* 숫자 입력 화살표 제거 */
+  /* Remove number input arrows */
   input[type="number"]::-webkit-inner-spin-button,
   input[type="number"]::-webkit-outer-spin-button {
     -webkit-appearance: none;
@@ -38,113 +43,31 @@
   }
   input[type="number"] { -moz-appearance: textfield; }
 
-  /* 기본 range 스타일 */
+  /* Range inputs - minimal */
   input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
-    height: 4px;
-    background: #1e293b;
+    height: 3px;
     border-radius: 2px;
     outline: none;
+    background: rgba(128,128,128,0.3);
   }
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
-    background: #3b82f6;
-    border: 2px solid #1e293b;
+    background: #007acc;
+    border: none;
     cursor: pointer;
-    transition: background 0.15s;
-  }
-  input[type="range"]::-webkit-slider-thumb:hover {
-    background: #60a5fa;
   }
   input[type="range"]::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
-    background: #3b82f6;
-    border: 2px solid #1e293b;
+    background: #007acc;
+    border: none;
     cursor: pointer;
-  }
-}
-
-@layer components {
-  /* 패널 카드 */
-  .panel {
-    @apply bg-[#111827] border border-[#1e293b] rounded-lg;
-  }
-
-  .panel-header {
-    @apply text-[11px] font-semibold text-[#64748b] uppercase tracking-[0.08em] select-none;
-  }
-
-  /* 상태 뱃지 */
-  .badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide;
-  }
-
-  .badge-success {
-    @apply bg-emerald-500/10 text-emerald-400 border border-emerald-500/20;
-  }
-
-  .badge-danger {
-    @apply bg-red-500/10 text-red-400 border border-red-500/20;
-  }
-
-  .badge-warning {
-    @apply bg-amber-500/10 text-amber-400 border border-amber-500/20;
-  }
-
-  .badge-info {
-    @apply bg-blue-500/10 text-blue-400 border border-blue-500/20;
-  }
-
-  .badge-neutral {
-    @apply bg-slate-500/10 text-slate-400 border border-slate-500/20;
-  }
-
-  /* 버튼 */
-  .btn-primary {
-    @apply inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500
-           text-white text-xs font-medium rounded transition-colors duration-150
-           disabled:opacity-40 disabled:cursor-not-allowed;
-  }
-
-  .btn-secondary {
-    @apply inline-flex items-center gap-1.5 px-3 py-2 bg-[#1e293b] hover:bg-[#2d3748]
-           text-slate-300 text-xs font-medium rounded border border-[#334155]
-           transition-colors duration-150;
-  }
-
-  .btn-danger {
-    @apply inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-500
-           text-white text-xs font-medium rounded transition-colors duration-150;
-  }
-
-  /* 입력 필드 */
-  .input {
-    @apply w-full bg-[#0f172a] border border-[#1e293b] rounded px-3 py-1.5
-           text-sm text-slate-200 placeholder-slate-600
-           focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 outline-none
-           transition-colors duration-150;
-  }
-
-  /* 구분선 */
-  .divider {
-    @apply border-t border-[#1e293b];
-  }
-
-  /* 깜박이는 도트 (라이브 표시) */
-  .pulse-dot {
-    @apply w-1.5 h-1.5 rounded-full;
-    animation: pulse-glow 2s ease-in-out infinite;
-  }
-
-  @keyframes pulse-glow {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
   }
 }

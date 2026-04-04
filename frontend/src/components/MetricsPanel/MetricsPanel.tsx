@@ -1,62 +1,68 @@
 import type { MetricsSnapshot } from '../../types'
+import { useTheme } from '../../hooks/useTheme'
 
 interface Props {
   metrics: MetricsSnapshot | null
 }
 
-interface MetricDef {
-  label: string
-  key: keyof MetricsSnapshot
-  format: (v: number) => string
-  color: string
-  group: 'accuracy' | 'latency' | 'pipeline'
-}
-
-const METRIC_DEFS: MetricDef[] = [
-  { label: 'Accuracy', key: 'accuracy', format: v => `${(v * 100).toFixed(1)}%`, color: 'text-emerald-400', group: 'accuracy' },
-  { label: 'F1 (macro)', key: 'f1', format: v => `${(v * 100).toFixed(1)}%`, color: 'text-blue-400', group: 'accuracy' },
-  { label: 'Precision', key: 'precision', format: v => `${(v * 100).toFixed(1)}%`, color: 'text-violet-400', group: 'accuracy' },
-  { label: 'Recall', key: 'recall', format: v => `${(v * 100).toFixed(1)}%`, color: 'text-amber-400', group: 'accuracy' },
-  { label: 'Avg Latency', key: 'avg_latency_ms', format: v => `${v.toFixed(1)}ms`, color: 'text-orange-400', group: 'latency' },
-  { label: 'P95 Latency', key: 'p95_latency_ms', format: v => `${v.toFixed(1)}ms`, color: 'text-red-400', group: 'latency' },
-  { label: 'Gate 통과율', key: 'gate_pass_rate', format: v => `${(v * 100).toFixed(1)}%`, color: 'text-cyan-400', group: 'pipeline' },
-  { label: 'AL Queue', key: 'al_queue_size', format: v => `${v}`, color: 'text-pink-400', group: 'pipeline' },
-  { label: '확정 건수', key: 'confirmed_count', format: v => `${v}`, color: 'text-emerald-400', group: 'pipeline' },
-]
-
 export default function MetricsPanel({ metrics }: Props) {
+  const t = useTheme()
+
   if (!metrics) {
     return (
-      <div className="panel p-4">
-        <h2 className="panel-header mb-3">실시간 지표</h2>
-        <p className="text-slate-600 text-xs text-center py-6">데이터 수집 대기 중</p>
+      <div className="p-3">
+        <div style={t.sectionHeader} className="mb-2">실시간 지표</div>
+        <p style={{ fontSize: 11, color: t.colors.textDim, textAlign: 'center', padding: '16px 0' }}>
+          데이터 수집 대기 중
+        </p>
       </div>
     )
   }
 
   const groups = [
-    { id: 'accuracy' as const, label: '정확도' },
-    { id: 'latency' as const, label: '레이턴시' },
-    { id: 'pipeline' as const, label: '파이프라인' },
+    {
+      label: '정확도',
+      items: [
+        { label: 'Accuracy', value: `${(metrics.accuracy * 100).toFixed(1)}%`, color: t.colors.success },
+        { label: 'F1', value: `${(metrics.f1 * 100).toFixed(1)}%`, color: t.colors.info },
+        { label: 'Precision', value: `${(metrics.precision * 100).toFixed(1)}%`, color: '#a78bfa' },
+        { label: 'Recall', value: `${(metrics.recall * 100).toFixed(1)}%`, color: t.colors.warning },
+      ],
+    },
+    {
+      label: '레이턴시',
+      items: [
+        { label: 'Avg', value: `${metrics.avg_latency_ms.toFixed(1)}ms`, color: '#fb923c' },
+        { label: 'P95', value: `${metrics.p95_latency_ms.toFixed(1)}ms`, color: t.colors.danger },
+      ],
+    },
+    {
+      label: '파이프라인',
+      items: [
+        { label: 'Gate Pass', value: `${(metrics.gate_pass_rate * 100).toFixed(1)}%`, color: '#22d3ee' },
+        { label: 'AL Queue', value: `${metrics.al_queue_size}`, color: '#f472b6' },
+        { label: 'Confirmed', value: `${metrics.confirmed_count}`, color: t.colors.success },
+      ],
+    },
   ]
 
   return (
-    <div className="panel p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="panel-header">실시간 지표</h2>
-        <span className="text-[10px] text-slate-600 font-mono">{metrics.window_size}f</span>
+    <div className="p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div style={t.sectionHeader}>실시간 지표</div>
+        <span style={{ fontSize: 10, color: t.colors.textDim, fontFamily: 'monospace' }}>{metrics.window_size}f</span>
       </div>
 
       {groups.map((group, gi) => (
-        <div key={group.id}>
-          {gi > 0 && <div className="divider my-2" />}
-          <div className="text-[9px] text-slate-600 uppercase tracking-wider mb-1.5 mt-1">{group.label}</div>
-          {METRIC_DEFS.filter(m => m.group === group.id).map(({ label, key, format, color }) => (
-            <div key={key} className="flex justify-between items-center py-1">
-              <span className="text-[11px] text-slate-500">{label}</span>
-              <span className={`text-xs font-mono font-medium ${color}`}>
-                {format(metrics[key] as number)}
-              </span>
+        <div key={group.label}>
+          {gi > 0 && <div style={t.divider} className="my-1.5" />}
+          <div style={{ fontSize: 9, color: t.colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2, marginTop: 2 }}>
+            {group.label}
+          </div>
+          {group.items.map(({ label, value, color }) => (
+            <div key={label} className="flex justify-between items-center py-0.5">
+              <span style={{ fontSize: 11, color: t.colors.textMuted }}>{label}</span>
+              <span style={{ fontSize: 11, fontFamily: 'monospace', fontWeight: 500, color }}>{value}</span>
             </div>
           ))}
         </div>
