@@ -506,7 +506,7 @@ export default function LivePage() {
           </div>
 
           {/* 메트릭 */}
-          <div style={{ background: t.colors.bgPanel, maxHeight: 240, overflowY: 'auto' }}>
+          <div className="flex-shrink-0 overflow-y-auto" style={{ background: t.colors.bgPanel, maxHeight: '45%' }}>
             <MetricsPanel metrics={metrics} />
           </div>
         </div>

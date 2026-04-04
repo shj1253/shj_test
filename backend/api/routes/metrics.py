@@ -51,9 +51,10 @@ _PCT_KEYS = {
 }
 
 
-def _kpi_status(key: str, value: float, op: str, target) -> str:
+def _kpi_status(key: str, value: float, op: str, target, need_gt: bool, has_gt: bool) -> str:
     """pass / warn / fail / na"""
-    if value == 0.0 and key not in {"sequence_error_rate", "false_block_rate", "gate_pass_rate"}:
+    # GT 필요한데 GT 데이터 없으면 N/A
+    if need_gt and not has_gt:
         return "na"
 
     if op == "gte":
@@ -102,13 +103,16 @@ def build_kpi_report(snapshot: dict, offline: dict | None = None) -> dict:
     # 오프라인 값 병합
     merged = {**snapshot, **off}
 
+    # GT 보유 여부: window_size > 0 이고 accuracy > 0 이면 GT 있다고 간주
+    has_gt = merged.get("window_size", 0) > 0 and merged.get("accuracy", 0.0) > 0.0
+
     stages: dict[int, list] = {1: [], 2: [], 3: [], 4: [], 5: []}
     summary = {"total": 0, "pass": 0, "warn": 0, "fail": 0, "na": 0}
 
     for (key, label, op, target, unit, priority, stage, need_gt) in KPI_DEFINITIONS:
         raw = merged.get(key, 0.0)
         value = float(raw) if raw is not None else 0.0
-        status = _kpi_status(key, value, op, target)
+        status = _kpi_status(key, value, op, target, need_gt, has_gt)
 
         entry = {
             "key": key,
@@ -129,7 +133,10 @@ def build_kpi_report(snapshot: dict, offline: dict | None = None) -> dict:
     cm_diag = merged.get("cm_diagonal_ratio", [])
     cm_kpi = []
     for i, v in enumerate(cm_diag):
-        status = "pass" if v >= 0.93 else ("warn" if v >= 0.85 else "fail")
+        if has_gt:
+            status = "pass" if v >= 0.93 else ("warn" if v >= 0.85 else "fail")
+        else:
+            status = "na"
         cm_kpi.append({
             "key": f"cm_diag_T{i+1}",
             "label": f"CM 대각 비율 T{i+1}",

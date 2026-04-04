@@ -92,6 +92,10 @@ function KpiCard({ kpi, t }: { kpi: KpiEntry; t: ReturnType<typeof useTheme> }) 
         </span>
         <span style={{ fontSize: 9, color: t.colors.textDim }}>목표 {kpi.target}</span>
       </div>
+      {/* N/A 이유 표시 */}
+      {kpi.status === 'na' && kpi.need_gt && (
+        <div style={{ fontSize: 8, color: t.colors.textDim, marginTop: 2 }}>GT 레이블 필요</div>
+      )}
     </div>
   )
 }
