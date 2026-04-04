@@ -143,7 +143,7 @@ function StageSection({
 
       {/* KPI grid */}
       {open && (
-        <div className="p-3" style={{ background: t.colors.bgBase }}>
+        <div className="p-3" style={{ background: t.colors.bgInput }}>
           <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
             {kpis.map(k => <KpiCard key={k.key} kpi={k} t={t} />)}
           </div>
