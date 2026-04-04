@@ -9,9 +9,9 @@ import TrainingPage from './pages/TrainingPage'
 
 const NAV_ITEMS = [
   { to: '/', label: '실시간 검출', icon: Camera },
-  { to: '/test', label: '테스트 모드', icon: FlaskConical },
+  { to: '/test', label: '테스트', icon: FlaskConical },
   { to: '/metrics', label: '성능 지표', icon: BarChart3 },
-  { to: '/labels', label: 'AL 레이블링', icon: Tags },
+  { to: '/labels', label: '레이블링', icon: Tags },
   { to: '/compare', label: '모델 비교', icon: Activity },
   { to: '/training', label: '학습 설정', icon: Settings2 },
 ]
@@ -19,28 +19,36 @@ const NAV_ITEMS = [
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
+      <div className="min-h-screen bg-[#0a0e17] text-slate-200 flex flex-col">
         {/* 헤더 */}
-        <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center gap-8">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center font-bold text-sm">C</div>
-            <span className="font-semibold text-lg">Canon Project</span>
+        <header className="h-11 bg-[#0f1520] border-b border-[#1a2332] px-5 flex items-center gap-6 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
+              <span className="text-[10px] font-bold text-white leading-none">C</span>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-sm font-semibold text-slate-100 tracking-tight">CANNON</span>
+              <span className="text-[10px] text-slate-500 font-medium">v0.1</span>
+            </div>
           </div>
-          <nav className="flex gap-1">
+
+          <div className="h-4 w-px bg-[#1e293b]" />
+
+          <nav className="flex gap-0.5">
             {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}
                 end={to === '/'}
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors ${
+                  `flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors duration-150 ${
                     isActive
-                      ? 'bg-blue-600 text-white'
-                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                      ? 'bg-blue-600/15 text-blue-400'
+                      : 'text-slate-500 hover:text-slate-300 hover:bg-[#1a2332]'
                   }`
                 }
               >
-                <Icon size={14} />
+                <Icon size={13} strokeWidth={1.8} />
                 {label}
               </NavLink>
             ))}

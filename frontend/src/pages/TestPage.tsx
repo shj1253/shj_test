@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Upload, Play, FileImage } from 'lucide-react'
+import { Upload, Play, Image } from 'lucide-react'
 import { api } from '../api/httpClient'
 import type { InferenceResult } from '../types'
 import SequenceIndicator from '../components/SequenceIndicator/SequenceIndicator'
@@ -47,22 +47,29 @@ export default function TestPage() {
   }, [])
 
   return (
-    <div className="p-6 grid grid-cols-2 gap-6">
-      {/* 왼쪽: 입력 */}
-      <div className="flex flex-col gap-4">
-        {/* 모드 선택 */}
-        <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wide">테스트 모드</h2>
-          <div className="flex gap-2 mb-4">
+    <div className="p-5 grid grid-cols-2 gap-4 h-[calc(100vh-44px)]">
+      {/* 입력 */}
+      <div className="flex flex-col gap-3 overflow-y-auto">
+        <div className="panel p-4">
+          <h2 className="panel-header mb-3">테스트 입력</h2>
+          <div className="flex gap-1.5 mb-3">
             <button
               onClick={() => setFileMode('upload')}
-              className={`px-3 py-1.5 rounded text-sm ${fileMode === 'upload' ? 'bg-blue-600' : 'bg-gray-800 text-gray-400'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                fileMode === 'upload'
+                  ? 'bg-blue-600/15 text-blue-400 border border-blue-500/30'
+                  : 'bg-[#1e293b] text-slate-500 border border-transparent'
+              }`}
             >
               파일 업로드
             </button>
             <button
               onClick={() => setFileMode('path')}
-              className={`px-3 py-1.5 rounded text-sm ${fileMode === 'path' ? 'bg-blue-600' : 'bg-gray-800 text-gray-400'}`}
+              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                fileMode === 'path'
+                  ? 'bg-blue-600/15 text-blue-400 border border-blue-500/30'
+                  : 'bg-[#1e293b] text-slate-500 border border-transparent'
+              }`}
             >
               경로 지정
             </button>
@@ -72,12 +79,13 @@ export default function TestPage() {
             <div
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
-              className="border-2 border-dashed border-gray-700 rounded-xl p-8 text-center cursor-pointer hover:border-blue-500 transition-colors"
+              className="border border-dashed border-[#1e293b] rounded-lg p-8 text-center
+                         cursor-pointer hover:border-blue-500/40 transition-colors"
               onClick={() => document.getElementById('file-input')?.click()}
             >
-              <FileImage className="mx-auto mb-2 text-gray-500" size={32} />
-              <p className="text-sm text-gray-400">이미지를 드래그하거나 클릭해서 선택</p>
-              <p className="text-xs text-gray-600 mt-1">JPG, PNG 지원 | 복수 선택 가능</p>
+              <Image className="mx-auto mb-2 text-slate-600" size={28} strokeWidth={1.5} />
+              <p className="text-xs text-slate-500">이미지를 드래그하거나 클릭하여 선택</p>
+              <p className="text-[10px] text-slate-600 mt-1">JPG, PNG | 복수 선택 가능</p>
               <input
                 id="file-input"
                 type="file"
@@ -94,63 +102,59 @@ export default function TestPage() {
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
                 placeholder="이미지/영상 파일 경로 또는 디렉터리"
-                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                className="input text-xs"
               />
-              <button
-                onClick={handlePathStart}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm"
-              >
-                <Play size={14} /> 시작
+              <button onClick={handlePathStart} className="btn-primary">
+                <Play size={12} /> 시작
               </button>
             </div>
           )}
 
-          {loading && <p className="mt-2 text-xs text-blue-400 animate-pulse">추론 중...</p>}
-          {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+          {loading && <p className="mt-2 text-[11px] text-blue-400 animate-pulse">추론 중...</p>}
+          {error && <p className="mt-2 text-[11px] text-red-400">{error}</p>}
         </div>
 
-        {/* 시퀀스 */}
         <SequenceIndicator currentState={sequenceState} lastResult={null} />
       </div>
 
-      {/* 오른쪽: 결과 목록 */}
-      <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-        <div className="p-4 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">추론 결과</h2>
-          <span className="text-xs text-gray-500">{results.length}개</span>
+      {/* 결과 목록 */}
+      <div className="panel overflow-hidden flex flex-col">
+        <div className="px-4 py-3 border-b border-[#1e293b] flex items-center justify-between shrink-0">
+          <h2 className="panel-header">추론 결과</h2>
+          <span className="text-[10px] text-slate-600 font-mono">{results.length}건</span>
         </div>
-        <div className="overflow-y-auto max-h-[600px]">
+        <div className="overflow-y-auto flex-1">
           {results.length === 0 ? (
-            <div className="p-8 text-center text-gray-600 text-sm">
+            <div className="p-8 text-center text-slate-600 text-xs">
               이미지를 업로드하면 결과가 표시됩니다
             </div>
           ) : (
             results.map((r, i) => (
-              <div key={r.frame_id} className="p-4 border-b border-gray-800 hover:bg-gray-800/50">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-mono text-gray-500">#{results.length - i}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
+              <div key={r.frame_id} className="px-4 py-3 border-b border-[#1e293b] hover:bg-[#0f172a] transition-colors">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-mono text-slate-600">#{results.length - i}</span>
+                  <span className={`badge ${
                     r.is_confirmed
-                      ? 'bg-green-900 text-green-300'
+                      ? 'badge-success'
                       : r.gate?.is_target
-                      ? 'bg-blue-900 text-blue-300'
-                      : 'bg-gray-800 text-gray-400'
+                      ? 'badge-info'
+                      : 'badge-neutral'
                   }`}>
-                    {r.is_confirmed ? '✓ 확정' : r.gate?.is_target ? 'Gate통과' : 'OOD'}
+                    {r.is_confirmed ? 'CONFIRMED' : r.gate?.is_target ? 'GATE PASS' : 'OOD'}
                   </span>
                 </div>
                 {r.classify && (
-                  <div className="text-sm">
-                    <span className="text-blue-400 font-medium">T{r.classify.target_id}</span>
-                    <span className="text-gray-400 ml-2">
-                      ({(r.classify.confidence * 100).toFixed(1)}%)
+                  <div className="text-xs">
+                    <span className="text-blue-400 font-medium font-mono">T{r.classify.target_id}</span>
+                    <span className="text-slate-500 ml-2">
+                      {(r.classify.confidence * 100).toFixed(1)}%
                     </span>
                     {r.classify.is_uncertain && (
-                      <span className="ml-2 text-yellow-400 text-xs">⚠ AL큐</span>
+                      <span className="ml-2 badge badge-warning">AL</span>
                     )}
                   </div>
                 )}
-                <div className="text-xs text-gray-500 mt-1">
+                <div className="text-[10px] text-slate-600 mt-1 font-mono">
                   {r.total_latency_ms.toFixed(1)}ms
                 </div>
               </div>

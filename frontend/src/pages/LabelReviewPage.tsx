@@ -1,24 +1,34 @@
 import { useEffect, useState } from 'react'
-import { RotateCcw, CheckCircle, RefreshCw, Zap } from 'lucide-react'
+import { RotateCcw, CheckCircle2, RefreshCw, Zap } from 'lucide-react'
 import { api } from '../api/httpClient'
 import { useALStore } from '../store'
 import type { ALSample } from '../types'
 
-const TARGET_LABELS = ['T1', 'T2', 'T3', 'T4']
-const TARGET_COLORS = ['bg-red-600', 'bg-blue-600', 'bg-green-600', 'bg-yellow-600']
+const BASE_COLORS = [
+  'bg-red-600', 'bg-blue-600', 'bg-emerald-600', 'bg-amber-600',
+  'bg-violet-600', 'bg-cyan-600', 'bg-pink-600', 'bg-lime-600',
+  'bg-orange-600', 'bg-teal-600', 'bg-rose-600', 'bg-indigo-600',
+  'bg-fuchsia-600', 'bg-sky-600', 'bg-emerald-600', 'bg-yellow-600',
+  'bg-purple-600', 'bg-green-600', 'bg-blue-600', 'bg-red-600',
+]
+
+function getTargetColor(index: number) {
+  return BASE_COLORS[index % BASE_COLORS.length]
+}
 
 export default function LabelReviewPage() {
   const { queue, stats, setQueue, pushLabelAction, undoLast, updateStats } = useALStore()
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [trainLoading, setTrainLoading] = useState(false)
+  const [numTargets, setNumTargets] = useState(4)
 
   const fetchQueue = async () => {
     try {
       const res = await api.getALQueue()
       setQueue(res.data.samples as ALSample[])
       updateStats(res.data.stats)
+      if (res.data.num_targets) setNumTargets(res.data.num_targets)
     } catch {
       // silent
     }
@@ -71,97 +81,103 @@ export default function LabelReviewPage() {
     }
   }
 
+  const targetLabels = Array.from({ length: numTargets }, (_, i) => `T${i + 1}`)
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-5 space-y-4">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold">Active Learning 레이블링</h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            미분류 {stats.unlabeled_count}건 | 완료 {stats.labeled_count}건 | 총 {stats.total_added}건
+          <h1 className="text-sm font-semibold text-slate-100">Active Learning</h1>
+          <p className="text-[11px] text-slate-500 mt-0.5 font-mono">
+            미분류 {stats.unlabeled_count} / 완료 {stats.labeled_count} / 총 {stats.total_added}
           </p>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleUndo}
-            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
-          >
-            <RotateCcw size={14} /> Undo
+        <div className="flex gap-1.5">
+          <button onClick={handleUndo} className="btn-secondary">
+            <RotateCcw size={12} /> Undo
           </button>
-          <button
-            onClick={fetchQueue}
-            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
-          >
-            <RefreshCw size={14} /> 새로고침
+          <button onClick={fetchQueue} className="btn-secondary">
+            <RefreshCw size={12} /> 새로고침
           </button>
           <button
             onClick={handleTrain}
             disabled={trainLoading || stats.labeled_count === 0}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+            className="btn-primary"
           >
-            <Zap size={14} />
+            <Zap size={12} />
             {trainLoading ? '학습 중...' : '재학습 시작'}
           </button>
         </div>
       </div>
 
       {/* 알림 */}
-      {error && <div className="bg-red-900/50 border border-red-700 rounded-lg px-4 py-2 text-sm text-red-300">{error}</div>}
-      {success && <div className="bg-green-900/50 border border-green-700 rounded-lg px-4 py-2 text-sm text-green-300 flex items-center gap-2"><CheckCircle size={14} />{success}</div>}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded px-4 py-2 text-xs text-red-400">
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded px-4 py-2 text-xs text-emerald-400 flex items-center gap-1.5">
+          <CheckCircle2 size={13} />{success}
+        </div>
+      )}
 
       {/* 큐 목록 */}
       {queue.length === 0 ? (
-        <div className="bg-gray-900 rounded-xl p-12 text-center border border-gray-800">
-          <p className="text-gray-500">레이블링할 샘플이 없습니다</p>
-          <p className="text-gray-600 text-sm mt-1">시스템이 실행 중이면 자동으로 수집됩니다</p>
+        <div className="panel p-10 text-center">
+          <p className="text-slate-500 text-xs">레이블링할 샘플 없음</p>
+          <p className="text-slate-600 text-[11px] mt-1">시스템 실행 중 자동 수집됩니다</p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {queue.map((sample) => (
-            <div key={sample.sample_id} className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+            <div key={sample.sample_id} className="panel overflow-hidden">
               {/* 샘플 정보 */}
-              <div className="p-3 border-b border-gray-800">
-                <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                  <span className={`px-2 py-0.5 rounded-full text-xs ${
-                    sample.queue_type === 'gate_margin'
-                      ? 'bg-orange-900 text-orange-300'
-                      : 'bg-purple-900 text-purple-300'
+              <div className="p-3 border-b border-[#1e293b]">
+                <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1.5">
+                  <span className={`badge ${
+                    sample.queue_type === 'gate_margin' ? 'badge-warning' : 'badge-info'
                   }`}>
-                    {sample.queue_type === 'gate_margin' ? 'Gate마진' : 'Classify불확실'}
+                    {sample.queue_type === 'gate_margin' ? 'GATE MARGIN' : 'UNCERTAIN'}
                   </span>
-                  <span>우선순위 {(sample.priority_score * 100).toFixed(0)}%</span>
+                  <span className="font-mono">
+                    {(sample.priority_score * 100).toFixed(0)}%
+                  </span>
                 </div>
 
-                {/* 확률 미니 바 */}
                 {sample.classify_probs && (
-                  <div className="flex gap-0.5 h-1.5 mt-2">
+                  <div className="flex gap-px h-1 mt-2 rounded-sm overflow-hidden">
                     {sample.classify_probs.map((p, i) => (
                       <div
                         key={i}
-                        className={TARGET_COLORS[i].replace('bg-', 'bg-opacity-80 bg-')}
+                        className={`${getTargetColor(i)} opacity-70`}
                         style={{ flex: p }}
                       />
                     ))}
                   </div>
                 )}
 
-                <div className="flex gap-2 text-xs text-gray-500 mt-2">
-                  <span>Gate: {sample.gate_score.toFixed(3)}</span>
+                <div className="flex gap-3 text-[10px] text-slate-600 mt-2 font-mono">
+                  <span>gate: {sample.gate_score.toFixed(3)}</span>
                   {sample.uncertainty_score > 0 && (
-                    <span>불확실: {(sample.uncertainty_score * 100).toFixed(0)}%</span>
+                    <span>unc: {(sample.uncertainty_score * 100).toFixed(0)}%</span>
                   )}
                 </div>
               </div>
 
               {/* 레이블 버튼 */}
               <div className="p-3">
-                <p className="text-xs text-gray-500 mb-2">레이블 선택:</p>
-                <div className="grid grid-cols-4 gap-1">
-                  {TARGET_LABELS.map((label, i) => (
+                <p className="text-[10px] text-slate-600 mb-1.5">레이블 선택</p>
+                <div className="grid gap-1" style={{
+                  gridTemplateColumns: `repeat(${Math.min(numTargets, 6)}, 1fr)`
+                }}>
+                  {targetLabels.map((label, i) => (
                     <button
                       key={i}
                       onClick={() => handleLabel(sample.sample_id, i)}
-                      className={`py-2 rounded text-xs font-bold transition-all hover:scale-105 ${TARGET_COLORS[i]} hover:opacity-90`}
+                      className={`py-1.5 rounded text-[10px] font-bold text-white transition-all
+                                  hover:opacity-80 active:scale-95 ${getTargetColor(i)}`}
                     >
                       {label}
                     </button>

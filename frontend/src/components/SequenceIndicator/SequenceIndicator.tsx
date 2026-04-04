@@ -1,72 +1,80 @@
-import { CheckCircle, Circle, Clock } from 'lucide-react'
+import { CheckCircle2, Circle, Loader2 } from 'lucide-react'
 import type { InferenceResult, SequenceState } from '../../types'
 
 interface Props {
   currentState: SequenceState
   lastResult: InferenceResult | null
+  numTargets?: number
 }
 
-const SEQUENCE_STEPS = [
-  { id: 1, label: 'Target 1', state: 'WAIT_T1' },
-  { id: 2, label: 'Target 2', state: 'WAIT_T2' },
-  { id: 3, label: 'Target 3', state: 'WAIT_T3' },
-  { id: 4, label: 'Target 4', state: 'WAIT_T4' },
-]
+function parseNumTargets(state: SequenceState): number {
+  const match = state.match(/WAIT_T(\d+)/)
+  return match ? Math.max(4, parseInt(match[1])) : 4
+}
 
-function getStepStatus(stepState: string, currentState: SequenceState) {
-  const stateOrder = ['WAIT_T1', 'WAIT_T2', 'WAIT_T3', 'WAIT_T4', 'COMPLETE']
+function buildSteps(n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: i + 1,
+    label: `T${i + 1}`,
+    state: `WAIT_T${i + 1}`,
+  }))
+}
+
+function getStepStatus(stepState: string, currentState: SequenceState, totalSteps: number) {
+  const stateOrder = [
+    ...Array.from({ length: totalSteps }, (_, i) => `WAIT_T${i + 1}`),
+    'COMPLETE',
+  ]
   const currentIdx = stateOrder.indexOf(currentState)
   const stepIdx = stateOrder.indexOf(stepState)
 
-  if (currentState === 'COMPLETE') return 'done'
-  if (stepIdx < currentIdx) return 'done'
-  if (stepIdx === currentIdx) return 'active'
-  return 'pending'
+  if (currentState === 'COMPLETE') return 'done' as const
+  if (stepIdx < currentIdx) return 'done' as const
+  if (stepIdx === currentIdx) return 'active' as const
+  return 'pending' as const
 }
 
-export default function SequenceIndicator({ currentState, lastResult }: Props) {
+export default function SequenceIndicator({ currentState, lastResult, numTargets }: Props) {
+  const n = numTargets ?? parseNumTargets(currentState)
+  const steps = buildSteps(n)
   const isComplete = currentState === 'COMPLETE'
   const violation = lastResult?.sequence?.violation_reason
 
   return (
-    <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+    <div className="panel p-4">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">검출 순서</h2>
-        {isComplete && (
-          <span className="text-xs px-2 py-0.5 bg-green-900 text-green-300 rounded-full">완료!</span>
-        )}
+        <h2 className="panel-header">검출 시퀀스</h2>
+        {isComplete && <span className="badge badge-success">COMPLETE</span>}
       </div>
 
-      {/* 진행 표시 */}
-      <div className="flex items-center gap-2 mb-4">
-        {SEQUENCE_STEPS.map((step, i) => {
-          const status = getStepStatus(step.state, currentState)
+      {/* 진행 바 */}
+      <div className="flex items-center gap-1 mb-4">
+        {steps.map((step, i) => {
+          const status = getStepStatus(step.state, currentState, n)
           return (
-            <div key={step.id} className="flex items-center gap-2">
-              <div className={`flex flex-col items-center gap-1 ${
-                status === 'active' ? 'scale-110 transition-transform' : ''
-              }`}>
-                {status === 'done' ? (
-                  <CheckCircle size={28} className="text-green-400" />
-                ) : status === 'active' ? (
-                  <div className="relative">
-                    <Clock size={28} className="text-blue-400 animate-pulse" />
-                  </div>
-                ) : (
-                  <Circle size={28} className="text-gray-700" />
-                )}
-                <span className={`text-xs font-medium ${
-                  status === 'done' ? 'text-green-400'
+            <div key={step.id} className="flex items-center gap-1 flex-1">
+              <div className="flex flex-col items-center gap-1 min-w-0">
+                <div className={`transition-transform duration-200 ${status === 'active' ? 'scale-110' : ''}`}>
+                  {status === 'done' ? (
+                    <CheckCircle2 size={22} className="text-emerald-400" strokeWidth={2} />
+                  ) : status === 'active' ? (
+                    <Loader2 size={22} className="text-blue-400 animate-spin" strokeWidth={2} />
+                  ) : (
+                    <Circle size={22} className="text-slate-700" strokeWidth={1.5} />
+                  )}
+                </div>
+                <span className={`text-[10px] font-mono font-medium ${
+                  status === 'done' ? 'text-emerald-400'
                   : status === 'active' ? 'text-blue-400'
-                  : 'text-gray-600'
+                  : 'text-slate-600'
                 }`}>
-                  T{step.id}
+                  {step.label}
                 </span>
               </div>
-              {i < SEQUENCE_STEPS.length - 1 && (
-                <div className={`h-0.5 w-6 ${
-                  getStepStatus(SEQUENCE_STEPS[i + 1].state, currentState) !== 'pending'
-                    ? 'bg-green-400' : 'bg-gray-700'
+              {i < steps.length - 1 && (
+                <div className={`h-px flex-1 mx-0.5 transition-colors duration-300 ${
+                  getStepStatus(steps[i + 1].state, currentState, n) !== 'pending'
+                    ? 'bg-emerald-500/40' : 'bg-slate-800'
                 }`} />
               )}
             </div>
@@ -74,19 +82,19 @@ export default function SequenceIndicator({ currentState, lastResult }: Props) {
         })}
       </div>
 
-      {/* 현재 상태 */}
-      <div className={`text-sm rounded-lg px-3 py-2 ${
+      {/* 상태 메시지 */}
+      <div className={`text-xs rounded px-3 py-2 ${
         isComplete
-          ? 'bg-green-900/50 text-green-300'
+          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
           : violation
-          ? 'bg-red-900/50 text-red-300'
-          : 'bg-gray-800 text-gray-300'
+          ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+          : 'bg-[#0f172a] text-slate-400 border border-[#1e293b]'
       }`}>
         {isComplete
-          ? '🎉 모든 Target 검출 완료!'
+          ? '모든 Target 검출 완료'
           : violation
-          ? `⚠ ${violation}`
-          : `대기 중: ${currentState.replace('WAIT_', 'Target ')}`}
+          ? `순서 위반: ${violation}`
+          : `대기 중 -- ${currentState.replace('WAIT_', 'Target ')}`}
       </div>
     </div>
   )

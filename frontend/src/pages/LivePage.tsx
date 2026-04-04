@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Play, Square, RotateCcw, Wifi } from 'lucide-react'
+import { Play, Square, RotateCcw, Radio } from 'lucide-react'
 import { useWebSocket } from '../api/wsClient'
 import { useInferenceStore, useMetricsStore } from '../store'
 import type { InferenceResult, MetricsSnapshot } from '../types'
@@ -7,21 +7,17 @@ import SequenceIndicator from '../components/SequenceIndicator/SequenceIndicator
 import MetricsPanel from '../components/MetricsPanel/MetricsPanel'
 import { api } from '../api/httpClient'
 
-const TARGET_NAMES = ['T1', 'T2', 'T3', 'T4']
-
 export default function LivePage() {
   const { lastResult, sequenceState, frameCount, isStreaming, setResult, setStreaming, resetSequence } = useInferenceStore()
   const { current: metrics, updateMetrics } = useMetricsStore()
   const [error, setError] = useState<string | null>(null)
   const [deviceId, setDeviceId] = useState(0)
 
-  // WebSocket — 추론 결과
   const handleStreamMsg = useCallback((data: unknown) => {
     const result = data as InferenceResult
     if (result.frame_id) setResult(result)
   }, [setResult])
 
-  // WebSocket — 메트릭
   const handleMetricsMsg = useCallback((data: unknown) => {
     updateMetrics(data as MetricsSnapshot)
   }, [updateMetrics])
@@ -48,127 +44,112 @@ export default function LivePage() {
     }
   }
 
-  const handleReset = async () => {
-    resetSequence()
-  }
-
   const gate = lastResult?.gate
   const classify = lastResult?.classify
   const sequence = lastResult?.sequence
 
   return (
-    <div className="p-6 grid grid-cols-3 gap-6 h-full">
-      {/* 왼쪽: 제어 + 상태 */}
-      <div className="col-span-1 flex flex-col gap-4">
+    <div className="p-5 grid grid-cols-[280px_1fr_280px] gap-4 h-[calc(100vh-44px)]">
+      {/* 좌측 패널: 제어 + 상태 */}
+      <div className="flex flex-col gap-3 overflow-y-auto">
         {/* 카메라 제어 */}
-        <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wide">카메라 제어</h2>
+        <div className="panel p-4">
+          <h2 className="panel-header mb-3">카메라 제어</h2>
           <div className="flex items-center gap-2 mb-3">
-            <label className="text-xs text-gray-400">장치 ID</label>
+            <span className="text-[11px] text-slate-500">장치 ID</span>
             <input
               type="number"
               value={deviceId}
               onChange={(e) => setDeviceId(Number(e.target.value))}
-              className="w-16 bg-gray-800 text-sm rounded px-2 py-1 border border-gray-700"
+              className="input w-14 text-center text-xs py-1"
               min={0}
             />
           </div>
           <div className="flex gap-2">
             <button
               onClick={isStreaming ? handleStop : handleStart}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                isStreaming
-                  ? 'bg-red-600 hover:bg-red-700'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              }`}
+              className={isStreaming ? 'btn-danger' : 'btn-primary'}
             >
-              {isStreaming ? <><Square size={14} /> 중지</> : <><Play size={14} /> 시작</>}
+              {isStreaming ? <><Square size={12} /> 중지</> : <><Play size={12} /> 시작</>}
             </button>
-            <button
-              onClick={handleReset}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
-            >
-              <RotateCcw size={14} /> 초기화
+            <button onClick={resetSequence} className="btn-secondary">
+              <RotateCcw size={12} /> 초기화
             </button>
           </div>
-          {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+          {error && <p className="mt-2 text-[11px] text-red-400">{error}</p>}
         </div>
 
-        {/* 상태 */}
-        <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wide">현재 상태</h2>
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-400">프레임</span>
-              <span className="font-mono">{frameCount.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">Gate 판정</span>
-              {gate ? (
-                <span className={gate.is_target ? 'text-green-400' : 'text-gray-500'}>
-                  {gate.is_target ? '✓ Target' : '✗ OOD'} ({gate.normalized_score.toFixed(3)})
-                </span>
-              ) : <span className="text-gray-600">—</span>}
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">분류 결과</span>
-              {classify ? (
-                <span className={classify.is_uncertain ? 'text-yellow-400' : 'text-blue-400'}>
-                  T{classify.target_id} ({(classify.confidence * 100).toFixed(1)}%)
-                  {classify.is_uncertain && ' ⚠️'}
-                </span>
-              ) : <span className="text-gray-600">—</span>}
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">순서</span>
-              {sequence ? (
-                <span className={sequence.accepted ? 'text-green-400' : 'text-red-400'}>
-                  {sequence.accepted ? '✓ 확정' : '✗ 불일치'}
-                </span>
-              ) : <span className="text-gray-600">—</span>}
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">레이턴시</span>
-              <span className="font-mono text-yellow-400">
-                {lastResult?.total_latency_ms.toFixed(1) ?? '—'} ms
-              </span>
-            </div>
+        {/* 파이프라인 상태 */}
+        <div className="panel p-4">
+          <h2 className="panel-header mb-3">파이프라인 상태</h2>
+          <div className="space-y-2.5">
+            <StatusRow label="프레임" value={frameCount.toLocaleString()} />
+            <StatusRow
+              label="Gate"
+              value={gate
+                ? `${gate.is_target ? 'TARGET' : 'OOD'} (${gate.normalized_score.toFixed(3)})`
+                : '--'}
+              status={gate ? (gate.is_target ? 'success' : 'neutral') : undefined}
+            />
+            <StatusRow
+              label="분류"
+              value={classify
+                ? `T${classify.target_id} (${(classify.confidence * 100).toFixed(1)}%)`
+                : '--'}
+              status={classify ? (classify.is_uncertain ? 'warning' : 'info') : undefined}
+            />
+            <StatusRow
+              label="순서"
+              value={sequence
+                ? (sequence.accepted ? '확정' : '불일치')
+                : '--'}
+              status={sequence ? (sequence.accepted ? 'success' : 'danger') : undefined}
+            />
+            <div className="divider" />
+            <StatusRow
+              label="레이턴시"
+              value={lastResult ? `${lastResult.total_latency_ms.toFixed(1)}ms` : '--'}
+              mono
+            />
           </div>
         </div>
 
         {/* 연결 상태 */}
-        <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
-          <div className="flex items-center gap-2 text-sm">
-            <Wifi size={14} className={isStreaming ? 'text-green-400' : 'text-gray-500'} />
-            <span className={isStreaming ? 'text-green-400' : 'text-gray-500'}>
-              {isStreaming ? '스트리밍 중' : '대기'}
+        <div className="panel px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Radio size={12} className={isStreaming ? 'text-emerald-400' : 'text-slate-600'} />
+            <span className={`text-[11px] font-medium ${isStreaming ? 'text-emerald-400' : 'text-slate-600'}`}>
+              {isStreaming ? '스트리밍 활성' : '대기'}
             </span>
+            {isStreaming && <span className="pulse-dot bg-emerald-400 ml-auto" />}
           </div>
         </div>
       </div>
 
-      {/* 가운데: 시퀀스 */}
-      <div className="col-span-1 flex flex-col gap-4">
+      {/* 중앙: 시퀀스 + 확률 */}
+      <div className="flex flex-col gap-3 overflow-y-auto">
         <SequenceIndicator
           currentState={sequenceState}
           lastResult={lastResult}
         />
 
-        {/* 확률 바 */}
+        {/* 분류 확률 분포 */}
         {classify && (
-          <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
-            <h2 className="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wide">분류 확률</h2>
-            <div className="space-y-2">
+          <div className="panel p-4">
+            <h2 className="panel-header mb-3">분류 확률 분포</h2>
+            <div className="space-y-1.5">
               {classify.probabilities.map((prob, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400 w-5">T{i + 1}</span>
-                  <div className="flex-1 bg-gray-800 rounded-full h-2">
+                  <span className="text-[10px] text-slate-500 w-6 text-right font-mono">T{i + 1}</span>
+                  <div className="flex-1 bg-[#0f172a] rounded-sm h-[6px] overflow-hidden">
                     <div
-                      className={`h-2 rounded-full transition-all ${i + 1 === classify.target_id ? 'bg-blue-500' : 'bg-gray-600'}`}
+                      className={`h-full rounded-sm transition-all duration-300 ${
+                        i + 1 === classify.target_id ? 'bg-blue-500' : 'bg-slate-700'
+                      }`}
                       style={{ width: `${prob * 100}%` }}
                     />
                   </div>
-                  <span className="text-xs font-mono text-gray-300 w-12 text-right">
+                  <span className="text-[10px] font-mono text-slate-400 w-10 text-right">
                     {(prob * 100).toFixed(1)}%
                   </span>
                 </div>
@@ -178,10 +159,38 @@ export default function LivePage() {
         )}
       </div>
 
-      {/* 오른쪽: 메트릭 */}
-      <div className="col-span-1">
+      {/* 우측: 메트릭 */}
+      <div className="overflow-y-auto">
         <MetricsPanel metrics={metrics} />
       </div>
+    </div>
+  )
+}
+
+function StatusRow({
+  label,
+  value,
+  status,
+  mono = false,
+}: {
+  label: string
+  value: string
+  status?: 'success' | 'danger' | 'warning' | 'info' | 'neutral'
+  mono?: boolean
+}) {
+  const colorMap = {
+    success: 'text-emerald-400',
+    danger: 'text-red-400',
+    warning: 'text-amber-400',
+    info: 'text-blue-400',
+    neutral: 'text-slate-500',
+  }
+  const valueColor = status ? colorMap[status] : 'text-slate-300'
+
+  return (
+    <div className="flex justify-between items-center">
+      <span className="text-[11px] text-slate-500">{label}</span>
+      <span className={`text-xs ${mono ? 'font-mono' : ''} ${valueColor}`}>{value}</span>
     </div>
   )
 }
