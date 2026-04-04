@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Play, Square, RotateCcw, Radio } from 'lucide-react'
+import { Play, Square, RotateCcw, Radio, Video, VideoOff } from 'lucide-react'
 import { useWebSocket } from '../api/wsClient'
 import { useInferenceStore, useMetricsStore } from '../store'
 import type { InferenceResult, MetricsSnapshot } from '../types'
@@ -14,6 +14,11 @@ export default function LivePage() {
   const { current: metrics, updateMetrics } = useMetricsStore()
   const [error, setError] = useState<string | null>(null)
   const [deviceId, setDeviceId] = useState(0)
+  const [showFeed, setShowFeed] = useState(true)
+
+  const feedUrl = import.meta.env.VITE_API_URL
+    ? `${import.meta.env.VITE_API_URL}/camera/feed`
+    : '/api/camera/feed'
 
   const handleStreamMsg = useCallback((data: unknown) => {
     const result = data as InferenceResult
@@ -77,6 +82,13 @@ export default function LivePage() {
             <button onClick={resetSequence} style={t.btnSecondary}>
               <RotateCcw size={11} /> 초기화
             </button>
+            <button
+              onClick={() => setShowFeed(v => !v)}
+              style={t.btnSecondary}
+              title={showFeed ? '피드 숨기기' : '피드 보기'}
+            >
+              {showFeed ? <VideoOff size={11} /> : <Video size={11} />}
+            </button>
           </div>
           {error && <p style={{ fontSize: 11, color: t.colors.danger, marginTop: 4 }}>{error}</p>}
         </div>
@@ -123,6 +135,53 @@ export default function LivePage() {
           <SequenceIndicator currentState={sequenceState} lastResult={lastResult} />
         </div>
 
+        {/* Camera feed */}
+        <div className="flex-1 relative overflow-hidden" style={{ background: '#000', minHeight: 200 }}>
+          {isStreaming && showFeed ? (
+            <img
+              src={feedUrl}
+              alt="camera feed"
+              style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full gap-2"
+                 style={{ color: t.colors.textDim }}>
+              <Video size={28} style={{ opacity: 0.3 }} />
+              <span style={{ fontSize: 11, opacity: 0.4 }}>
+                {isStreaming ? '피드 숨김' : '대기 중 -- 시작 버튼을 누르세요'}
+              </span>
+            </div>
+          )}
+          {/* Overlay: classify result */}
+          {isStreaming && showFeed && classify && (
+            <div className="absolute bottom-0 left-0 right-0 px-3 py-1.5"
+                 style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(2px)' }}>
+              <div className="flex items-center gap-3">
+                <span style={{ fontSize: 10, color: t.colors.textDim }}>분류</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: t.colors.accent, fontFamily: 'monospace' }}>
+                  T{classify.target_id}
+                </span>
+                <span style={{ fontSize: 10, color: t.colors.textMuted, fontFamily: 'monospace' }}>
+                  {(classify.confidence * 100).toFixed(1)}%
+                </span>
+                <div className="flex gap-0.5 ml-auto">
+                  {classify.probabilities.map((p, i) => (
+                    <div key={i} className="flex flex-col items-center gap-0.5">
+                      <div style={{
+                        width: 6,
+                        height: Math.max(2, p * 40),
+                        background: i + 1 === classify.target_id ? t.colors.accent : t.colors.textDim,
+                        borderRadius: 1,
+                        transition: 'height 0.2s',
+                      }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
         {classify && (
           <div className="p-3" style={{ background: t.colors.bgPanel }}>
             <div style={t.sectionHeader} className="mb-2">분류 확률 분포</div>
@@ -147,9 +206,6 @@ export default function LivePage() {
             </div>
           </div>
         )}
-
-        {/* Fill remaining space */}
-        <div className="flex-1" style={{ background: t.colors.bgPanel }} />
       </div>
 
       {/* Right: metrics */}

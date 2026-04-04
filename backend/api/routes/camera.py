@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from backend.logging_config import get_logger
@@ -84,3 +84,26 @@ async def camera_status():
     if mgr is None:
         return {"running": False}
     return mgr.status()
+
+
+@router.get("/feed")
+async def camera_feed():
+    """MJPEG 스트리밍 — <img src="/camera/feed"> 로 직접 사용"""
+    from backend.main import get_stream_manager
+
+    async def generate():
+        while True:
+            mgr = get_stream_manager()
+            if mgr and mgr.last_jpeg:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n"
+                    + mgr.last_jpeg
+                    + b"\r\n"
+                )
+            await asyncio.sleep(1 / 15)  # 15fps 폴링
+
+    return StreamingResponse(
+        generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )

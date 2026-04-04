@@ -96,4 +96,11 @@ export const api = {
   }) => http.post('/training/config', data),
   getAugPresets: () => http.get('/training/augmentation/presets'),
   getPreprocessOptions: () => http.get('/training/preprocess/options'),
+  uploadTrainingImages: (targetId: number, files: File[]) => {
+    const fd = new FormData()
+    fd.append('target_id', String(targetId))
+    files.forEach(f => fd.append('files', f))
+    return http.post('/training/upload', fd)
+  },
+  getUploadStats: () => http.get('/training/upload/stats'),
 }

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Lock, Check, Square, AlertCircle, CheckCircle2, Loader2, Info } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Lock, Check, Square, AlertCircle, CheckCircle2, Loader2, Info, Upload, X, FolderOpen } from 'lucide-react'
 import { api } from '../api/httpClient'
 import AugmentationControl from '../components/AugmentationControl/AugmentationControl'
 import { useTheme } from '../hooks/useTheme'
@@ -52,6 +52,15 @@ export default function TrainingPage() {
   const [intensityOptions, setIntensityOptions] = useState<Record<AugIntensity, IntensityOption>>(DEFAULT_INTENSITY)
 
   const [numTargets, setNumTargets] = useState(4)
+  const [uploadTarget, setUploadTarget] = useState(1)
+  const [uploadFiles, setUploadFiles] = useState<File[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadResult, setUploadResult] = useState<{ saved: number; skipped: string[] } | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [uploadStats, setUploadStats] = useState<Record<string, number>>({})
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const [optionalSteps, setOptionalSteps] = useState<string[]>(['pad_square'])
   const [intensity, setIntensity] = useState<AugIntensity>('medium')
   const [nPerTarget, setNPerTarget] = useState(500)
@@ -81,6 +90,10 @@ export default function TrainingPage() {
         if (meta.preprocess.optional_available) setOptionalMeta(meta.preprocess.optional_available)
         if (meta.augmentation.intensity_options) setIntensityOptions(meta.augmentation.intensity_options)
         setOffline(false)
+        try {
+          const statsRes = await api.getUploadStats()
+          setUploadStats(statsRes.data)
+        } catch { /* ignore */ }
       } catch {
         setOffline(true)
       } finally {
@@ -108,6 +121,33 @@ export default function TrainingPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleUpload = async () => {
+    if (!uploadFiles.length) return
+    setUploading(true)
+    setUploadResult(null)
+    setUploadError(null)
+    try {
+      const res = await api.uploadTrainingImages(uploadTarget, uploadFiles)
+      setUploadResult({ saved: res.data.saved, skipped: res.data.skipped })
+      setUploadFiles([])
+      const statsRes = await api.getUploadStats()
+      setUploadStats(statsRes.data)
+    } catch (e: unknown) {
+      setUploadError(e instanceof Error ? e.message : '업로드 실패')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleFilePick = (fl: FileList | null) => {
+    if (!fl) return
+    setUploadFiles(prev => {
+      const existing = new Set(prev.map(f => f.name))
+      const added = Array.from(fl).filter(f => !existing.has(f.name))
+      return [...prev, ...added]
+    })
   }
 
   const toggleOptional = (id: string, checked: boolean) => {
@@ -168,6 +208,115 @@ export default function TrainingPage() {
               }}>T{i + 1}</span>
             ))}
           </div>
+        </Section>
+
+        {/* Data Upload */}
+        <Section t={t} title="학습 데이터 업로드">
+          <div style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 8 }}>
+            각 타겟별 정상 이미지를 업로드하세요. <code style={{ background: t.colors.bgInput, padding: '0 3px', borderRadius: 2, fontSize: 10 }}>artifacts/data/raw/T{'{n}'}/</code> 에 저장됩니다.
+          </div>
+
+          {/* Target selector */}
+          <div className="flex items-center gap-2 mb-2">
+            <span style={{ fontSize: 11, color: t.colors.textMuted }}>타겟</span>
+            <div className="flex flex-wrap gap-1">
+              {Array.from({ length: numTargets }, (_, i) => i + 1).map(n => (
+                <button
+                  key={n}
+                  onClick={() => setUploadTarget(n)}
+                  style={{
+                    ...t.badge('info'),
+                    cursor: 'pointer',
+                    background: uploadTarget === n ? t.colors.accent + '25' : t.colors.bgInput,
+                    color: uploadTarget === n ? t.colors.accent : t.colors.textMuted,
+                    border: `1px solid ${uploadTarget === n ? t.colors.accent : t.colors.border}`,
+                    fontFamily: 'monospace',
+                  }}
+                >
+                  T{n}
+                  {uploadStats[`T${n}`] !== undefined && (
+                    <span style={{ marginLeft: 3, color: uploadTarget === n ? t.colors.accent : t.colors.textDim }}>
+                      ({uploadStats[`T${n}`]})
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Drop zone */}
+          <div
+            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={e => { e.preventDefault(); setDragOver(false); handleFilePick(e.dataTransfer.files) }}
+            onClick={() => fileInputRef.current?.click()}
+            className="rounded flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors"
+            style={{
+              height: 80,
+              border: `2px dashed ${dragOver ? t.colors.accent : t.colors.border}`,
+              background: dragOver ? t.colors.accent + '10' : t.colors.bgInput,
+              color: dragOver ? t.colors.accent : t.colors.textDim,
+            }}
+          >
+            <FolderOpen size={20} />
+            <span style={{ fontSize: 11 }}>클릭하거나 파일을 드래그하세요 (jpg / png)</span>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/jpeg,image/png,image/bmp,image/webp"
+            style={{ display: 'none' }}
+            onChange={e => handleFilePick(e.target.files)}
+          />
+
+          {/* File list */}
+          {uploadFiles.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {uploadFiles.map((f, i) => (
+                <div key={i} className="flex items-center gap-1 rounded px-1.5 py-0.5"
+                     style={{ background: t.colors.bgPanel, border: `1px solid ${t.colors.border}`, fontSize: 10, color: t.colors.textMuted }}>
+                  {f.name}
+                  <X size={9} style={{ cursor: 'pointer', color: t.colors.textDim }}
+                    onClick={() => setUploadFiles(prev => prev.filter((_, j) => j !== i))} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Upload button */}
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              onClick={handleUpload}
+              disabled={uploading || uploadFiles.length === 0}
+              style={t.btnPrimary}
+            >
+              {uploading
+                ? <><Loader2 size={11} className="animate-spin" /> 업로드 중</>
+                : <><Upload size={11} /> T{uploadTarget}에 {uploadFiles.length}개 업로드</>
+              }
+            </button>
+            {uploadFiles.length > 0 && (
+              <button onClick={() => setUploadFiles([])} style={t.btnSecondary}>
+                초기화
+              </button>
+            )}
+          </div>
+
+          {uploadResult && (
+            <div className="flex items-center gap-1 mt-1" style={{ fontSize: 11, color: t.colors.success }}>
+              <CheckCircle2 size={12} />
+              {uploadResult.saved}개 저장됨
+              {uploadResult.skipped.length > 0 && (
+                <span style={{ color: t.colors.warning }}> (건너뜀: {uploadResult.skipped.join(', ')})</span>
+              )}
+            </div>
+          )}
+          {uploadError && (
+            <div className="flex items-center gap-1 mt-1" style={{ fontSize: 11, color: t.colors.danger }}>
+              <AlertCircle size={12} />{uploadError}
+            </div>
+          )}
         </Section>
 
         {/* Preprocessing */}
@@ -254,8 +403,8 @@ export default function TrainingPage() {
             다음 단계
           </div>
           <ol style={{ fontSize: 11, color: t.colors.textMuted, listStyle: 'decimal', paddingLeft: 16 }} className="space-y-0.5">
-            <li><code style={{ background: t.colors.bgPanel, padding: '0 4px', borderRadius: 2, fontSize: 10 }}>artifacts/data/raw/</code> 에 T1~T{numTargets} 이미지 배치</li>
-            <li>터미널에서 학습 실행</li>
+            <li>위 "학습 데이터 업로드"에서 T1~T{numTargets} 이미지 업로드</li>
+            <li>설정 저장 후 터미널에서 학습 실행</li>
             <li>학습 완료 후 모델 비교 탭에서 벤치마크 실행</li>
           </ol>
         </div>

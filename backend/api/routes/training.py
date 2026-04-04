@@ -3,9 +3,10 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
 from backend.config import settings
@@ -152,3 +153,48 @@ def get_augmentation_presets():
 def get_preprocess_options():
     """선택 전처리 항목 목록 + 필수 항목 정보 반환"""
     return FieldPreprocessor().get_info()
+
+
+_ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+_RAW_DIR = Path("artifacts/data/raw")
+
+
+@router.post("/upload")
+async def upload_training_images(
+    target_id: int = Form(..., ge=1, le=20, description="타겟 번호 (1-based)"),
+    files: list[UploadFile] = File(...),
+):
+    """타겟 학습 이미지 업로드 — artifacts/data/raw/T{target_id}/ 에 저장"""
+    target_dir = _RAW_DIR / f"T{target_id}"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    saved: list[str] = []
+    skipped: list[str] = []
+
+    for f in files:
+        if not f.filename:
+            continue
+        ext = Path(f.filename).suffix.lower()
+        if ext not in _ALLOWED_EXTS:
+            skipped.append(f.filename)
+            continue
+        content = await f.read()
+        dest = target_dir / f.filename
+        dest.write_bytes(content)
+        saved.append(f.filename)
+
+    logger.info("Training images uploaded", target_id=target_id, saved=len(saved), skipped=len(skipped))
+    return {"target_id": target_id, "saved": len(saved), "skipped": skipped}
+
+
+@router.get("/upload/stats")
+def upload_stats():
+    """각 타겟별 업로드된 이미지 수 반환"""
+    result: dict[str, int] = {}
+    if not _RAW_DIR.exists():
+        return result
+    for d in sorted(_RAW_DIR.iterdir()):
+        if d.is_dir() and d.name.startswith("T"):
+            count = sum(1 for f in d.iterdir() if f.suffix.lower() in _ALLOWED_EXTS)
+            result[d.name] = count
+    return result

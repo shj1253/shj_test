@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from backend.active_learning.al_engine import ALEngine
@@ -45,6 +46,7 @@ class StreamManager:
         self._mode: str = "idle"
         self._frame_count: int = 0
         self._error_count: int = 0
+        self.last_jpeg: bytes | None = None
 
     # ── 시작 / 중지 ────────────────────────────────────────────────────────
 
@@ -118,6 +120,11 @@ class StreamManager:
                     break
 
                 self._frame_count += 1
+
+                # MJPEG용 JPEG 인코딩 (BGR로 변환 후 인코딩)
+                bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                self.last_jpeg = jpeg_arr.tobytes()
 
                 # 추론 실행
                 result = await self.pipeline.run(frame)
