@@ -37,16 +37,64 @@ export interface InferenceResult {
 export interface MetricsSnapshot {
   timestamp: string
   window_size: number
+  // 기본 분류
   accuracy: number
   f1: number
   precision: number
   recall: number
+  confusion_matrix: number[][]
+  per_class_f1: number[]
+  cm_diagonal_ratio: number[]
+  // 레이턴시
   avg_latency_ms: number
   p95_latency_ms: number
+  gate_latency_avg_ms: number
+  gate_latency_p95_ms: number
+  classify_latency_avg_ms: number
+  classify_latency_p95_ms: number
+  // Stage 2
   gate_pass_rate: number
+  ood_recall: number
+  auroc: number
+  // Stage 3
+  low_confidence_ratio: number
+  ece: number
+  // Stage 4
+  sequence_error_rate: number
+  false_block_rate: number
+  sequence_completion_rate: number
+  e2e_latency_ms: number
+  system_precision: number
+  // AL
   al_queue_size: number
   confirmed_count: number
-  confusion_matrix: number[][]
+  psi_score: number
+  al_query_hit_rate: number
+}
+
+export type KpiStatus = 'pass' | 'warn' | 'fail' | 'na'
+
+export interface KpiEntry {
+  key: string
+  label: string
+  value: number
+  display: string
+  target: string
+  status: KpiStatus
+  priority: number
+  need_gt?: boolean
+  unit?: string
+}
+
+export interface KpiReport {
+  summary: { total: number; pass: number; warn: number; fail: number; na: number }
+  stages: {
+    stage1: KpiEntry[]
+    stage2: KpiEntry[]
+    stage3: KpiEntry[]
+    stage4: KpiEntry[]
+    al: KpiEntry[]
+  }
 }
 
 export interface ALSample {

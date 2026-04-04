@@ -84,6 +84,8 @@ export const api = {
   getMetricsHistory: (n = 50) => http.get(`/metrics/history?n=${n}`),
   resetMetrics: () => http.post('/metrics/reset'),
   pipelineStatus: () => http.get('/metrics/pipeline'),
+  getKpiReport: (cameraId = '0') => http.get(`/metrics/kpi?camera_id=${cameraId}`),
+  setOfflineMetrics: (data: Record<string, number>) => http.post('/metrics/kpi/offline', data),
 
   // Active Learning
   getALQueue: () => http.get('/al/queue'),
