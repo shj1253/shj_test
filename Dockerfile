@@ -28,4 +28,4 @@ RUN mkdir -p artifacts/data/raw artifacts/data/labeled artifacts/data/al_queue \
 
 EXPOSE 8000
 
-CMD ["python3", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD python3 -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
