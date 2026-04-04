@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from backend.active_learning.al_engine import ALEngine
 from backend.api.routes import active_learning, camera, inference, metrics, models, training
@@ -28,48 +27,82 @@ logger = get_logger(__name__)
 
 # ── 글로벌 상태 ───────────────────────────────────────────────────────────
 
-_pipeline: InferencePipeline | None = None
-_metrics_tracker: RealtimeMetricsTracker | None = None
-_al_engine: ALEngine | None = None
-_stream_manager: StreamManager | None = None
-_metrics_broadcast_task: asyncio.Task | None = None
+# 카메라 ID → StreamManager 매핑 (다중 카메라 지원)
+_stream_managers: dict[str, StreamManager] = {}
+_metrics_broadcast_tasks: dict[str, asyncio.Task] = {}
 
 
-def get_pipeline() -> InferencePipeline | None:
-    return _pipeline
-
-def get_metrics_tracker() -> RealtimeMetricsTracker | None:
-    return _metrics_tracker
-
-def get_al_engine() -> ALEngine | None:
-    return _al_engine
-
-def get_stream_manager() -> StreamManager | None:
-    return _stream_manager
+def get_stream_manager(camera_id: str = "0") -> StreamManager | None:
+    return _stream_managers.get(camera_id)
 
 
-async def reinit_pipeline() -> None:
-    """모델 교체 후 파이프라인 재초기화"""
-    global _pipeline, _stream_manager
+def list_stream_managers() -> dict[str, StreamManager]:
+    return dict(_stream_managers)
 
+
+async def get_or_create_stream_manager(camera_id: str) -> StreamManager:
+    """카메라 ID에 해당하는 StreamManager 반환. 없으면 새로 생성."""
+    if camera_id not in _stream_managers:
+        gate = registry.active_gate
+        clf = registry.active_classifier
+
+        sm = SequenceStateMachine(
+            num_targets=settings.num_targets,
+            on_target_detected=lambda tid, state: logger.info(
+                "Target detected", camera_id=camera_id, target_id=tid, new_state=state
+            ),
+            on_complete=lambda: logger.info("Sequence COMPLETE", camera_id=camera_id),
+            on_violation=lambda tid, state, reason: logger.warning(
+                "Sequence violation", camera_id=camera_id, tid=tid, state=state, reason=reason
+            ),
+        )
+        pipeline = InferencePipeline(gate=gate, classifier=clf, state_machine=sm)
+        metrics_tracker = RealtimeMetricsTracker(window_size=settings.metrics_window_size)
+        al_engine = ALEngine()
+
+        mgr = StreamManager(
+            pipeline=pipeline,
+            metrics_tracker=metrics_tracker,
+            al_engine=al_engine,
+            camera_id=camera_id,
+        )
+        _stream_managers[camera_id] = mgr
+
+        # 메트릭 브로드캐스트 태스크 시작
+        task = asyncio.create_task(
+            mgr.metrics_broadcast_loop(interval_s=1.0),
+            name=f"metrics_broadcast_{camera_id}",
+        )
+        _metrics_broadcast_tasks[camera_id] = task
+        logger.info("StreamManager created", camera_id=camera_id)
+
+    return _stream_managers[camera_id]
+
+
+async def remove_stream_manager(camera_id: str) -> None:
+    """StreamManager 종료 및 제거"""
+    if camera_id in _stream_managers:
+        await _stream_managers[camera_id].stop()
+        del _stream_managers[camera_id]
+    if camera_id in _metrics_broadcast_tasks:
+        _metrics_broadcast_tasks[camera_id].cancel()
+        del _metrics_broadcast_tasks[camera_id]
+    logger.info("StreamManager removed", camera_id=camera_id)
+
+
+async def reinit_pipeline(camera_id: str | None = None) -> None:
+    """모델 교체 후 파이프라인 재초기화. camera_id=None이면 전체 재초기화."""
     gate = registry.active_gate
     clf = registry.active_classifier
-    sm = SequenceStateMachine(
-        on_target_detected=lambda tid, state: logger.info(
-            "Target detected", target_id=tid, new_state=state
-        ),
-        on_complete=lambda: logger.info("All targets COMPLETE"),
-        on_violation=lambda tid, state, reason: logger.warning(
-            "Sequence violation", target_id=tid, state=state, reason=reason
-        ),
-    )
 
-    _pipeline = InferencePipeline(gate=gate, classifier=clf, state_machine=sm)
+    targets = [camera_id] if camera_id else list(_stream_managers.keys())
+    for cid in targets:
+        if cid in _stream_managers:
+            mgr = _stream_managers[cid]
+            mgr.pipeline.swap_gate(gate)
+            mgr.pipeline.swap_classifier(clf)
 
-    if _stream_manager:
-        _stream_manager.pipeline = _pipeline
-
-    logger.info("Pipeline reinitialized")
+    logger.info("Pipeline reinitialized", cameras=targets)
 
 
 # ── Lifespan ─────────────────────────────────────────────────────────────────
@@ -77,46 +110,17 @@ async def reinit_pipeline() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작 / 종료 시 리소스 관리"""
-    global _pipeline, _metrics_tracker, _al_engine, _stream_manager
-    global _metrics_broadcast_task
-
     logger.info("Canon Project API starting up")
     settings.ensure_dirs()
 
-    # 메트릭 트래커 초기화
-    _metrics_tracker = RealtimeMetricsTracker(window_size=settings.metrics_window_size)
-
-    # AL 엔진 초기화
-    _al_engine = ALEngine()
-
-    # 기본 모델 생성 (미학습 상태 — 학습/로드 후 사용)
+    # 기본 모델 생성 (미학습 상태)
     gate = registry.create_gate(settings.gate_model)
     clf = registry.create_classifier(backbone=settings.classifier_backbone)
     registry.register_gate("gate_a", gate)
     registry.register_classifier("classifier", clf)
 
-    sm = SequenceStateMachine(
-        num_targets=settings.num_targets,
-        on_target_detected=lambda tid, state: logger.info(
-            "Target detected", target_id=tid, new_state=state
-        ),
-        on_complete=lambda: logger.info("Sequence COMPLETE"),
-        on_violation=lambda tid, state, reason: logger.warning(
-            "Violation", tid=tid, state=state, reason=reason
-        ),
-    )
-    _pipeline = InferencePipeline(gate=gate, classifier=clf, state_machine=sm)
-    _stream_manager = StreamManager(
-        pipeline=_pipeline,
-        metrics_tracker=_metrics_tracker,
-        al_engine=_al_engine,
-    )
-
-    # 메트릭 브로드캐스트 루프 시작
-    _metrics_broadcast_task = asyncio.create_task(
-        _stream_manager.metrics_broadcast_loop(interval_s=1.0),
-        name="metrics_broadcast",
-    )
+    # 기본 카메라 "0" 미리 생성 (시작은 API 호출로)
+    await get_or_create_stream_manager("0")
 
     logger.info("Canon Project API ready", host=settings.host, port=settings.port)
 
@@ -124,10 +128,10 @@ async def lifespan(app: FastAPI):
 
     # 종료 정리
     logger.info("Shutting down")
-    if _stream_manager:
-        await _stream_manager.stop()
-    if _metrics_broadcast_task:
-        _metrics_broadcast_task.cancel()
+    for task in _metrics_broadcast_tasks.values():
+        task.cancel()
+    for mgr in _stream_managers.values():
+        await mgr.stop()
 
 
 # ── FastAPI 앱 ───────────────────────────────────────────────────────────────
@@ -139,7 +143,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — settings.allowed_origins 환경변수로 제어 (기본 "*")
+# CORS
 _origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -165,7 +169,8 @@ app.include_router(training.router)
 async def health():
     return {
         "status": "ok",
-        "pipeline": _pipeline is not None,
+        "pipeline": len(_stream_managers) > 0,
+        "cameras": list(_stream_managers.keys()),
         "models": registry.list_gates() + registry.list_classifiers(),
     }
 
@@ -197,26 +202,50 @@ async def generic_exception_handler(request, exc: Exception):
 
 # ── WebSocket 엔드포인트 ──────────────────────────────────────────────────
 
-@app.websocket("/ws/stream")
-async def ws_stream(websocket: WebSocket):
-    """실시간 추론 결과 스트림"""
-    await ws_manager.connect(websocket, "stream")
+@app.websocket("/ws/stream/{camera_id}")
+async def ws_stream_camera(websocket: WebSocket, camera_id: str):
+    """카메라별 실시간 추론 결과 스트림"""
+    channel = f"stream_{camera_id}"
+    await ws_manager.connect(websocket, channel)
     try:
         while True:
-            await websocket.receive_text()  # heartbeat ping 수신
+            await websocket.receive_text()
     except WebSocketDisconnect:
-        ws_manager.disconnect(websocket, "stream")
+        ws_manager.disconnect(websocket, channel)
+
+
+@app.websocket("/ws/stream")
+async def ws_stream_default(websocket: WebSocket):
+    """기본 카메라(0) 스트림 (하위 호환)"""
+    channel = "stream_0"
+    await ws_manager.connect(websocket, channel)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket, channel)
+
+
+@app.websocket("/ws/alerts")
+async def ws_alerts(websocket: WebSocket):
+    """전체 카메라 알림 스트림"""
+    await ws_manager.connect(websocket, "alerts")
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket, "alerts")
 
 
 @app.websocket("/ws/metrics")
 async def ws_metrics(websocket: WebSocket):
     """실시간 메트릭 스트림"""
     await ws_manager.connect(websocket, "metrics")
-    # 연결 즉시 현재 스냅샷 전송
-    if _metrics_tracker:
+    mgr = get_stream_manager("0")
+    if mgr:
         import json
         await websocket.send_text(
-            json.dumps(_metrics_tracker.current_metrics.to_dict(), default=str)
+            json.dumps(mgr.metrics_tracker.current_metrics.to_dict(), default=str)
         )
     try:
         while True:
@@ -232,18 +261,18 @@ async def ws_al(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_json()
-            # 클라이언트에서 레이블 제출 가능 (양방향)
-            if data.get("action") == "label" and _al_engine:
+            mgr = get_stream_manager("0")
+            if data.get("action") == "label" and mgr and mgr.al_engine:
                 sample_id = data.get("sample_id")
                 label = data.get("label")
                 if sample_id is not None and label is not None:
                     try:
-                        _al_engine.queue.label(sample_id, label)
+                        mgr.al_engine.queue.label(sample_id, label)
                         await ws_manager.broadcast("al", {
                             "event": "labeled",
                             "sample_id": sample_id,
                             "label": label,
-                            "stats": _al_engine.stats,
+                            "stats": mgr.al_engine.stats,
                         })
                     except Exception as e:
                         await websocket.send_json({"error": str(e)})

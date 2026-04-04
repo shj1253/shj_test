@@ -8,7 +8,7 @@ const WS_BASE = import.meta.env.VITE_API_URL
 
 type MessageHandler = (data: unknown) => void
 
-export function useWebSocket(channel: 'stream' | 'metrics' | 'al', onMessage: MessageHandler) {
+export function useWebSocket(channel: string, onMessage: MessageHandler) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mounted = useRef(true)

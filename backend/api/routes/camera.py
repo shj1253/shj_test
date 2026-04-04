@@ -1,5 +1,5 @@
 """
-카메라 스트리밍 API — 실시간 모드 제어
+카메라 스트리밍 API — 실시간 모드 제어 (다중 카메라 지원)
 """
 from __future__ import annotations
 
@@ -28,13 +28,28 @@ class FileSourceRequest(BaseModel):
     frame_interval_ms: int = 33
 
 
-@router.post("/start")
-async def start_camera(req: CameraStartRequest):
-    """실시간 카메라 모드 시작"""
-    from backend.main import get_stream_manager
-    mgr = get_stream_manager()
-    if mgr is None:
-        raise HTTPException(status_code=503, detail="Stream manager not initialized")
+# ── 카메라 목록 ────────────────────────────────────────────────────────────
+
+@router.get("/list")
+async def list_cameras():
+    """활성 카메라 목록"""
+    from backend.main import list_stream_managers
+    managers = list_stream_managers()
+    return {
+        "cameras": [
+            {"camera_id": cid, **mgr.status()}
+            for cid, mgr in managers.items()
+        ]
+    }
+
+
+# ── 카메라별 제어 ──────────────────────────────────────────────────────────
+
+@router.post("/{camera_id}/start")
+async def start_camera(camera_id: str, req: CameraStartRequest):
+    """카메라 시작"""
+    from backend.main import get_or_create_stream_manager
+    mgr = await get_or_create_stream_manager(camera_id)
     try:
         await mgr.start_camera(
             device_id=req.device_id,
@@ -42,58 +57,56 @@ async def start_camera(req: CameraStartRequest):
             width=req.width,
             height=req.height,
         )
-        return {"status": "started", "mode": "camera", "device_id": req.device_id}
+        return {"status": "started", "camera_id": camera_id, "mode": "camera", "device_id": req.device_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/stop")
-async def stop_camera():
-    """카메라/스트리밍 중지"""
+@router.post("/{camera_id}/stop")
+async def stop_camera(camera_id: str):
+    """카메라 중지"""
     from backend.main import get_stream_manager
-    mgr = get_stream_manager()
+    mgr = get_stream_manager(camera_id)
     if mgr is None:
-        raise HTTPException(status_code=503, detail="Stream manager not initialized")
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
     await mgr.stop()
-    return {"status": "stopped"}
+    return {"status": "stopped", "camera_id": camera_id}
 
 
-@router.post("/file")
-async def start_file_source(req: FileSourceRequest):
-    """파일 소스 기반 테스트 모드 시작"""
-    from backend.main import get_stream_manager
-    mgr = get_stream_manager()
-    if mgr is None:
-        raise HTTPException(status_code=503, detail="Stream manager not initialized")
+@router.post("/{camera_id}/file")
+async def start_file_source(camera_id: str, req: FileSourceRequest):
+    """파일 소스 기반 테스트 모드"""
+    from backend.main import get_or_create_stream_manager
+    mgr = await get_or_create_stream_manager(camera_id)
     try:
         await mgr.start_file(
             path=req.path,
             loop=req.loop,
             frame_interval_ms=req.frame_interval_ms,
         )
-        return {"status": "started", "mode": "file", "path": req.path}
+        return {"status": "started", "camera_id": camera_id, "mode": "file", "path": req.path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/status")
-async def camera_status():
-    """현재 스트리밍 상태"""
+@router.get("/{camera_id}/status")
+async def camera_status(camera_id: str):
+    """카메라 상태"""
     from backend.main import get_stream_manager
-    mgr = get_stream_manager()
+    mgr = get_stream_manager(camera_id)
     if mgr is None:
-        return {"running": False}
+        return {"camera_id": camera_id, "running": False, "mode": "idle"}
     return mgr.status()
 
 
-@router.get("/feed")
-async def camera_feed():
-    """MJPEG 스트리밍 — <img src="/camera/feed"> 로 직접 사용"""
+@router.get("/{camera_id}/feed")
+async def camera_feed(camera_id: str):
+    """MJPEG 스트리밍"""
     from backend.main import get_stream_manager
 
     async def generate():
         while True:
-            mgr = get_stream_manager()
+            mgr = get_stream_manager(camera_id)
             if mgr and mgr.last_jpeg:
                 yield (
                     b"--frame\r\n"
@@ -101,9 +114,78 @@ async def camera_feed():
                     + mgr.last_jpeg
                     + b"\r\n"
                 )
-            await asyncio.sleep(1 / 15)  # 15fps 폴링
+            await asyncio.sleep(1 / 15)  # 15fps
 
     return StreamingResponse(
         generate(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@router.delete("/{camera_id}")
+async def remove_camera(camera_id: str):
+    """카메라 제거 (StreamManager 종료)"""
+    from backend.main import remove_stream_manager
+    await remove_stream_manager(camera_id)
+    return {"status": "removed", "camera_id": camera_id}
+
+
+# ── 하위 호환 (카메라 0) ──────────────────────────────────────────────────
+
+@router.post("/start")
+async def start_camera_default(req: CameraStartRequest):
+    from backend.main import get_or_create_stream_manager
+    mgr = await get_or_create_stream_manager("0")
+    try:
+        await mgr.start_camera(device_id=req.device_id, fps=req.fps, width=req.width, height=req.height)
+        return {"status": "started", "camera_id": "0", "mode": "camera"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/stop")
+async def stop_camera_default():
+    from backend.main import get_stream_manager
+    mgr = get_stream_manager("0")
+    if mgr:
+        await mgr.stop()
+    return {"status": "stopped", "camera_id": "0"}
+
+
+@router.post("/file")
+async def start_file_default(req: FileSourceRequest):
+    from backend.main import get_or_create_stream_manager
+    mgr = await get_or_create_stream_manager("0")
+    try:
+        await mgr.start_file(path=req.path, loop=req.loop, frame_interval_ms=req.frame_interval_ms)
+        return {"status": "started", "camera_id": "0", "mode": "file"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/status")
+async def camera_status_default():
+    from backend.main import get_stream_manager
+    mgr = get_stream_manager("0")
+    if mgr is None:
+        return {"camera_id": "0", "running": False}
+    return mgr.status()
+
+
+@router.get("/feed")
+async def camera_feed_default():
+    from backend.main import get_stream_manager
+
+    async def generate():
+        while True:
+            mgr = get_stream_manager("0")
+            if mgr and mgr.last_jpeg:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n"
+                    + mgr.last_jpeg
+                    + b"\r\n"
+                )
+            await asyncio.sleep(1 / 15)
+
+    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")

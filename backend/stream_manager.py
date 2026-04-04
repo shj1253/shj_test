@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -18,6 +19,9 @@ from backend.metrics.realtime_tracker import RealtimeMetricsTracker
 
 logger = get_logger(__name__)
 
+# 연속 N프레임 같은 타겟이어야 알림 발송 (오탐 방지)
+DEBOUNCE_FRAMES = 3
+
 
 class StreamManager:
     """
@@ -25,7 +29,8 @@ class StreamManager:
 
     - Camera or File 소스에서 프레임 읽기
     - 파이프라인 추론 실행
-    - WebSocket으로 결과 브로드캐스트
+    - WebSocket으로 결과 브로드캐스트 (채널: stream_{camera_id})
+    - 디바운싱 + 상태 전환 감지 → alerts 채널에 알림 발송
     - AL 엔진에 샘플 전달
     - 메트릭 추적
     """
@@ -35,10 +40,12 @@ class StreamManager:
         pipeline: InferencePipeline,
         metrics_tracker: RealtimeMetricsTracker,
         al_engine: ALEngine | None = None,
+        camera_id: str = "0",
     ) -> None:
         self.pipeline = pipeline
         self.metrics_tracker = metrics_tracker
         self.al_engine = al_engine
+        self.camera_id = camera_id
 
         self._source: CameraSource | None = None
         self._task: asyncio.Task | None = None
@@ -46,7 +53,14 @@ class StreamManager:
         self._mode: str = "idle"
         self._frame_count: int = 0
         self._error_count: int = 0
+
+        # MJPEG용 마지막 JPEG 프레임
         self.last_jpeg: bytes | None = None
+
+        # 알림 디바운싱
+        self._debounce_votes: dict[int, int] = {}  # target_id → 연속 프레임 수
+        self._last_alert_target: int | None = None  # 마지막으로 알림 발송한 target_id
+        self._pending_alert: dict | None = None     # 다음 브로드캐스트에 첨부할 알림
 
     # ── 시작 / 중지 ────────────────────────────────────────────────────────
 
@@ -83,11 +97,14 @@ class StreamManager:
         self._running = True
         self._frame_count = 0
         self._error_count = 0
+        self._debounce_votes.clear()
+        self._last_alert_target = None
+        self._pending_alert = None
         self._task = asyncio.create_task(
             self._frame_loop(frame_interval_ms),
-            name="stream_loop",
+            name=f"stream_loop_{self.camera_id}",
         )
-        logger.info("Stream loop started", mode=self._mode)
+        logger.info("Stream loop started", camera_id=self.camera_id, mode=self._mode)
 
     async def stop(self) -> None:
         self._running = False
@@ -101,7 +118,7 @@ class StreamManager:
             await self._source.close()
             self._source = None
         self._mode = "idle"
-        logger.info("Stream stopped")
+        logger.info("Stream stopped", camera_id=self.camera_id)
 
     # ── 프레임 루프 ────────────────────────────────────────────────────────
 
@@ -114,20 +131,23 @@ class StreamManager:
             try:
                 frame = await self._source.read_frame()
                 if frame is None:
-                    logger.info("Stream source exhausted")
+                    logger.info("Stream source exhausted", camera_id=self.camera_id)
                     self._running = False
-                    await ws_manager.broadcast("stream", {"event": "stream_ended"})
+                    await ws_manager.broadcast(f"stream_{self.camera_id}", {"event": "stream_ended"})
                     break
 
                 self._frame_count += 1
 
-                # MJPEG용 JPEG 인코딩 (BGR로 변환 후 인코딩)
+                # MJPEG용 JPEG 인코딩
                 bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
                 self.last_jpeg = jpeg_arr.tobytes()
 
                 # 추론 실행
                 result = await self.pipeline.run(frame)
+
+                # 알림 디바운싱 처리
+                await self._process_alert(result)
 
                 # AL 수집
                 if self.al_engine:
@@ -140,12 +160,18 @@ class StreamManager:
                 # 메트릭 기록
                 self.metrics_tracker.record(result)
 
-                # WebSocket 브로드캐스트 (구독자 있을 때만)
+                # WebSocket 브로드캐스트
                 result_dict = result.to_dict()
                 result_dict["frame_count"] = self._frame_count
-                await ws_manager.broadcast("stream", result_dict)
+                result_dict["camera_id"] = self.camera_id
 
-                # 에러 카운트 리셋
+                # 알림이 있으면 첨부 (한 번만)
+                if self._pending_alert:
+                    result_dict["alert"] = self._pending_alert
+                    self._pending_alert = None
+
+                await ws_manager.broadcast(f"stream_{self.camera_id}", result_dict)
+
                 self._error_count = 0
 
             except asyncio.CancelledError:
@@ -154,19 +180,20 @@ class StreamManager:
                 self._error_count += 1
                 logger.error(
                     "Frame loop error",
+                    camera_id=self.camera_id,
                     error=str(e),
                     error_count=self._error_count,
                     exc_info=True,
                 )
-                await ws_manager.broadcast("stream", {
+                await ws_manager.broadcast(f"stream_{self.camera_id}", {
                     "event": "error",
+                    "camera_id": self.camera_id,
                     "message": str(e),
                     "error_count": self._error_count,
                 })
 
-                # 연속 에러 10회 이상이면 중단
                 if self._error_count >= 10:
-                    logger.error("Too many errors, stopping stream")
+                    logger.error("Too many errors, stopping stream", camera_id=self.camera_id)
                     self._running = False
                     break
 
@@ -176,6 +203,58 @@ class StreamManager:
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
 
+    async def _process_alert(self, result) -> None:
+        """
+        디바운싱 + 상태 전환 감지 → 알림 발송
+
+        - Gate 통과 + 분류 결과가 DEBOUNCE_FRAMES 연속으로 같은 타겟이면 알림
+        - 이전과 다른 타겟일 때만 발송 (같은 화면 반복 알림 방지)
+        - OOD(타겟 없음) 프레임이 누적되면 last_alert_target 리셋
+        """
+        from backend.target_meta import get_meta
+
+        if result.gate_result.is_target and result.classify_result:
+            tid = result.classify_result.target_id
+            # 현재 타겟 투표 증가
+            self._debounce_votes[tid] = self._debounce_votes.get(tid, 0) + 1
+            # 다른 타겟 투표 감소
+            for k in list(self._debounce_votes):
+                if k != tid:
+                    self._debounce_votes[k] = max(0, self._debounce_votes[k] - 1)
+
+            # 연속 N프레임 확인 + 이전과 다른 타겟
+            if (self._debounce_votes[tid] >= DEBOUNCE_FRAMES
+                    and tid != self._last_alert_target):
+                self._last_alert_target = tid
+                meta = get_meta(tid)
+                alert = {
+                    "event": "alert",
+                    "camera_id": self.camera_id,
+                    "target_id": tid,
+                    "target_name": meta["name"],
+                    "screen_desc": meta["screen_desc"],
+                    "situation": meta["situation"],
+                    "action": meta["action"],
+                    "severity": meta["severity"],
+                    "frame_count": self._frame_count,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                self._pending_alert = alert
+                await ws_manager.broadcast("alerts", alert)
+                logger.info(
+                    "Alert fired",
+                    camera_id=self.camera_id,
+                    target_id=tid,
+                    severity=meta["severity"],
+                )
+        else:
+            # OOD — 모든 투표 감소
+            for k in list(self._debounce_votes):
+                self._debounce_votes[k] = max(0, self._debounce_votes[k] - 1)
+            # 투표가 모두 0이면 last_alert_target 리셋 (화면에서 완전히 사라진 것)
+            if all(v == 0 for v in self._debounce_votes.values()):
+                self._last_alert_target = None
+
     # ── 메트릭 브로드캐스트 태스크 ────────────────────────────────────────
 
     async def metrics_broadcast_loop(self, interval_s: float = 1.0) -> None:
@@ -183,19 +262,23 @@ class StreamManager:
         while True:
             try:
                 snapshot = self.metrics_tracker.current_metrics
-                await ws_manager.broadcast("metrics", snapshot.to_dict())
+                data = snapshot.to_dict()
+                data["camera_id"] = self.camera_id
+                await ws_manager.broadcast("metrics", data)
             except Exception as e:
-                logger.warning("Metrics broadcast error", error=str(e))
+                logger.warning("Metrics broadcast error", camera_id=self.camera_id, error=str(e))
             await asyncio.sleep(interval_s)
 
     # ── 상태 ──────────────────────────────────────────────────────────────
 
     def status(self) -> dict:
         return {
+            "camera_id": self.camera_id,
             "running": self._running,
             "mode": self._mode,
             "frame_count": self._frame_count,
             "error_count": self._error_count,
+            "last_alert_target": self._last_alert_target,
             "source_info": self._source.get_info() if self._source else None,
             "ws_connections": ws_manager.all_counts(),
         }

@@ -38,13 +38,26 @@ export const api = {
     return http.post('/infer/', fd)
   },
 
-  // Camera
+  // Camera (단일 카메라 - 하위 호환)
   startCamera: (deviceId = 0, fps = 30) =>
     http.post('/camera/start', { device_id: deviceId, fps }),
   stopCamera: () => http.post('/camera/stop'),
   startFile: (path: string, loop = false) =>
     http.post('/camera/file', { path, loop }),
   cameraStatus: () => http.get('/camera/status'),
+
+  // Camera (다중 카메라)
+  listCameras: () => http.get('/camera/list'),
+  startCameraById: (cameraId: string, deviceId = 0, fps = 30) =>
+    http.post(`/camera/${cameraId}/start`, { device_id: deviceId, fps }),
+  stopCameraById: (cameraId: string) =>
+    http.post(`/camera/${cameraId}/stop`),
+  startFileById: (cameraId: string, path: string, loop = false) =>
+    http.post(`/camera/${cameraId}/file`, { path, loop }),
+  cameraStatusById: (cameraId: string) =>
+    http.get(`/camera/${cameraId}/status`),
+  removeCameraById: (cameraId: string) =>
+    http.delete(`/camera/${cameraId}`),
 
   // Models
   listModels: () => http.get('/models/list'),

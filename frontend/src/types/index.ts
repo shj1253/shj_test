@@ -99,6 +99,23 @@ export interface TrainingConfig {
   }
 }
 
+// ── 감지 알림 타입 ────────────────────────────────────────────────────────
+
+export type AlertSeverity = 'error' | 'warning' | 'info' | 'success'
+
+export interface DetectionAlert {
+  event: 'alert'
+  camera_id: string
+  target_id: number
+  target_name: string
+  screen_desc: string
+  situation: string
+  action: string
+  severity: AlertSeverity
+  frame_count: number
+  timestamp: string
+}
+
 export interface TrainingConfigMeta {
   preprocess: {
     mandatory: PreprocessStep[]
