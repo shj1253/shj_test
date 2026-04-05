@@ -357,6 +357,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   const [startLoading, setStartLoading] = useState(false)
   const [showFileInput, setShowFileInput] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadPct, setUploadPct] = useState(0)
   const filePickRef = useRef<HTMLInputElement>(null)
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [rtspUrl, setRtspUrl] = useState('')
@@ -440,12 +441,13 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true)
+    setUploadPct(0)
     setError(null)
     try {
       const form = new FormData()
       form.append('file', file)
       form.append('loop', 'true')
-      await api.uploadAndStartFile(cameraId, form)
+      await api.uploadAndStartFile(cameraId, form, (pct) => setUploadPct(pct))
       setIsStreaming(true)
       setShowFileInput(false)
 
@@ -456,6 +458,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
       pushApiError(pushNotif, err, `파일 소스 시작 실패`)
     } finally {
       setUploading(false)
+      setUploadPct(0)
       if (filePickRef.current) filePickRef.current.value = ''
     }
   }
@@ -561,7 +564,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
                 disabled={uploading}
                 style={{ ...t.btnPrimary, padding: '2px 8px', fontSize: 10, opacity: uploading ? 0.6 : 1 }}
               >
-                <FileVideo size={10} /> {uploading ? '업로드 중...' : '영상 파일 (mp4 / avi)'}
+                <FileVideo size={10} /> {uploading ? (uploadPct < 100 ? `업로드 중... ${uploadPct}%` : '처리 중...') : '영상 파일 (mp4 / avi)'}
               </button>
               <span style={{ fontSize: 10, color: t.colors.textDim }}>선택 즉시 재생</span>
             </div>

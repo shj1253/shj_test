@@ -54,10 +54,13 @@ export const api = {
     http.post(`/camera/${cameraId}/stop`),
   startFileById: (cameraId: string, path: string, loop = false) =>
     http.post(`/camera/${cameraId}/file`, { path, loop }),
-  uploadAndStartFile: (cameraId: string, form: FormData) =>
+  uploadAndStartFile: (cameraId: string, form: FormData, onProgress?: (pct: number) => void) =>
     http.post(`/camera/${cameraId}/upload-and-start`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 0,
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
+      },
     }),
   startRtsp: (cameraId: string, url: string) =>
     http.post(`/camera/${cameraId}/rtsp`, { path: url }),

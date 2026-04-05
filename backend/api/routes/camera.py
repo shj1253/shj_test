@@ -115,6 +115,8 @@ async def upload_and_start(
     from backend.main import get_or_create_stream_manager
     mgr = await get_or_create_stream_manager(camera_id)
     try:
+        # 기존 스트림 먼저 정리 (안 하면 race condition으로 멈춤)
+        await mgr.stop()
         # cv2.VideoCapture 초기화도 블로킹 → 스레드로
         await asyncio.to_thread(mgr._sync_open_file, str(dest), loop)
         mgr._start_loop(frame_interval_ms=33)
