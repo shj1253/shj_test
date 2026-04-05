@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   Camera, FlaskConical, BarChart3, Tags, Activity, Settings2,
-  Database, Eye, Brain, ChevronDown, Palette, Sun, Moon, Monitor,
+  ChevronDown, Sun, Moon, Monitor,
 } from 'lucide-react'
 import { useThemeStore, THEME_LABELS, type ThemeId } from '../../store/themeStore'
 
@@ -12,7 +12,6 @@ const WORKFLOW_GROUPS = [
   {
     id: 'prepare',
     label: '사전학습',
-    icon: Database,
     items: [
       { to: '/training', label: '학습 설정', icon: Settings2 },
       { to: '/test', label: '테스트 추론', icon: FlaskConical },
@@ -22,7 +21,6 @@ const WORKFLOW_GROUPS = [
   {
     id: 'realtime',
     label: '실시간',
-    icon: Eye,
     items: [
       { to: '/', label: '실시간 검출', icon: Camera },
       { to: '/metrics', label: '성능 지표', icon: BarChart3 },
@@ -31,7 +29,6 @@ const WORKFLOW_GROUPS = [
   {
     id: 'al',
     label: '능동학습',
-    icon: Brain,
     items: [
       { to: '/labels', label: 'AL 레이블링', icon: Tags },
     ],
@@ -72,10 +69,6 @@ export default function Layout({ children }: LayoutProps) {
       <div className="flex items-stretch shrink-0" style={{ height: 35, background: colors.bgActivityBar, borderBottom: `1px solid ${colors.border}` }}>
         {/* Logo */}
         <div className="flex items-center px-3 gap-2 shrink-0" style={{ borderRight: `1px solid ${colors.border}` }}>
-          <div className="w-5 h-5 rounded flex items-center justify-center text-white text-[9px] font-bold"
-               style={{ background: colors.accent }}>
-            C
-          </div>
           <span className="text-xs font-semibold" style={{ color: colors.textHeading }}>CANNON</span>
         </div>
 
@@ -83,7 +76,6 @@ export default function Layout({ children }: LayoutProps) {
         <div className="flex items-stretch flex-1">
           {WORKFLOW_GROUPS.map(group => {
             const isActive = activeGroup?.id === group.id
-            const Icon = group.icon
             return (
               <button
                 key={group.id}
@@ -95,7 +87,6 @@ export default function Layout({ children }: LayoutProps) {
                   borderRight: `1px solid ${colors.border}`,
                 }}
               >
-                <Icon size={13} />
                 {group.label}
                 {isActive && (
                   <div className="absolute bottom-0 left-0 right-0 h-[2px]" style={{ background: colors.accent }} />
