@@ -229,8 +229,10 @@ export default function TrainingPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="p-4 space-y-3 max-w-3xl">
+    <div className="h-full flex overflow-hidden">
+      {/* ── 좌측: 설정 패널 ── */}
+      <div className="overflow-y-auto flex-shrink-0" style={{ width: 420 }}>
+      <div className="p-4 space-y-3">
         {/* Header */}
         <div>
           <h2 style={{ fontSize: 14, fontWeight: 600, color: t.colors.textHeading }}>학습 설정</h2>
@@ -571,6 +573,232 @@ export default function TrainingPage() {
             <li>학습 완료 후 모델 비교 탭에서 벤치마크 실행</li>
           </ol>
         </div>
+      </div>
+      </div>
+
+      {/* ── 우측: 이미지 미리보기 패널 ── */}
+      <ImagePreviewPanel
+        numTargets={numTargets}
+        uploadTarget={uploadTarget}
+        uploadFiles={uploadFiles}
+        onRemoveLocalFile={(i) => setUploadFiles(prev => prev.filter((_, j) => j !== i))}
+        onUploadStatsChange={() => api.getUploadStats().then(r => setUploadStats(r.data)).catch(() => {})}
+        t={t}
+      />
+    </div>
+  )
+}
+
+// ── 이미지 미리보기 패널 ────────────────────────────────────────────────────
+
+function ImagePreviewPanel({
+  numTargets, uploadTarget, uploadFiles, onRemoveLocalFile, onUploadStatsChange, t,
+}: {
+  numTargets: number
+  uploadTarget: number
+  uploadFiles: File[]
+  onRemoveLocalFile: (i: number) => void
+  onUploadStatsChange: () => void
+  t: ReturnType<typeof useTheme>
+}) {
+  const [activeTarget, setActiveTarget] = useState(1)
+  const [serverImages, setServerImages] = useState<Record<number, string[]>>({})
+  const [deleting, setDeleting] = useState<string | null>(null)
+
+  // 타겟 변경 시 서버 이미지 목록 갱신
+  const fetchImages = useCallback((targetId: number) => {
+    api.listTargetImages(targetId).then(r => {
+      setServerImages(prev => ({ ...prev, [targetId]: r.data.images ?? [] }))
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    for (let i = 1; i <= numTargets; i++) fetchImages(i)
+  }, [numTargets, fetchImages])
+
+  // 업로드 타겟 바뀌면 해당 탭 자동 포커스
+  useEffect(() => { setActiveTarget(uploadTarget) }, [uploadTarget])
+
+  const handleDelete = async (targetId: number, filename: string) => {
+    setDeleting(filename)
+    try {
+      await api.deleteTargetImage(targetId, filename)
+      setServerImages(prev => ({
+        ...prev,
+        [targetId]: (prev[targetId] ?? []).filter(f => f !== filename),
+      }))
+      onUploadStatsChange()
+    } catch { /* 무시 */ }
+    finally { setDeleting(null) }
+  }
+
+  const localForThisTarget = uploadFiles  // 업로드 전 선택 파일 (현재 uploadTarget 기준)
+  const serverList = serverImages[activeTarget] ?? []
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden" style={{
+      borderLeft: `1px solid ${t.colors.border}`,
+      background: t.colors.bgSidebar,
+    }}>
+      {/* 탭 헤더 */}
+      <div className="flex items-center gap-0 flex-shrink-0"
+           style={{ borderBottom: `1px solid ${t.colors.border}`, background: t.colors.bgPanel, minHeight: 36 }}>
+        <span style={{ fontSize: 10, color: t.colors.textDim, padding: '0 12px', fontWeight: 600, flexShrink: 0 }}>
+          이미지 미리보기
+        </span>
+        <div className="flex">
+          {Array.from({ length: numTargets }, (_, i) => i + 1).map(n => {
+            const count = (serverImages[n] ?? []).length + (n === uploadTarget ? uploadFiles.length : 0)
+            const isActive = activeTarget === n
+            return (
+              <button
+                key={n}
+                onClick={() => { setActiveTarget(n); fetchImages(n) }}
+                style={{
+                  fontSize: 11, fontWeight: isActive ? 700 : 400,
+                  padding: '6px 14px',
+                  color: isActive ? t.colors.accent : t.colors.textMuted,
+                  background: isActive ? t.colors.bg : 'transparent',
+                  borderRight: `1px solid ${t.colors.border}`,
+                  borderBottom: isActive ? `2px solid ${t.colors.accent}` : '2px solid transparent',
+                  position: 'relative',
+                }}
+              >
+                T{n}
+                {count > 0 && (
+                  <span style={{
+                    marginLeft: 4, fontSize: 9, fontWeight: 700,
+                    background: isActive ? t.colors.accent : t.colors.textDim,
+                    color: '#fff', borderRadius: 8, padding: '0 4px',
+                  }}>{count}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* 이미지 그리드 */}
+      <div className="flex-1 overflow-y-auto p-3">
+        {/* 업로드 전 로컬 파일 (uploadTarget == activeTarget 일 때만) */}
+        {activeTarget === uploadTarget && localForThisTarget.length > 0 && (
+          <div className="mb-3">
+            <div style={{ fontSize: 9, color: t.colors.textDim, fontWeight: 700, textTransform: 'uppercase',
+                          letterSpacing: '0.06em', marginBottom: 6 }}>
+              대기 중 (미업로드)
+            </div>
+            <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))' }}>
+              {localForThisTarget.map((file, i) => (
+                <LocalImageThumb key={i} file={file} onRemove={() => onRemoveLocalFile(i)} t={t} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 서버에 올라간 이미지 */}
+        {serverList.length > 0 ? (
+          <div>
+            <div style={{ fontSize: 9, color: t.colors.textDim, fontWeight: 700, textTransform: 'uppercase',
+                          letterSpacing: '0.06em', marginBottom: 6 }}>
+              업로드됨 ({serverList.length}장)
+            </div>
+            <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))' }}>
+              {serverList.map(filename => (
+                <ServerImageThumb
+                  key={filename}
+                  targetId={activeTarget}
+                  filename={filename}
+                  deleting={deleting === filename}
+                  onDelete={() => handleDelete(activeTarget, filename)}
+                  t={t}
+                />
+              ))}
+            </div>
+          </div>
+        ) : activeTarget !== uploadTarget || localForThisTarget.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-32 gap-2" style={{ color: t.colors.textDim }}>
+            <span style={{ fontSize: 24, opacity: 0.2 }}>📂</span>
+            <span style={{ fontSize: 11, opacity: 0.5 }}>T{activeTarget} 이미지 없음</span>
+            <span style={{ fontSize: 10, opacity: 0.35, textAlign: 'center', lineHeight: 1.5 }}>
+              좌측에서 T{activeTarget} 선택 후<br />이미지를 업로드하세요
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+// ── 로컬 파일 썸네일 (업로드 전) ─────────────────────────────────────────────
+
+function LocalImageThumb({ file, onRemove, t }: {
+  file: File
+  onRemove: () => void
+  t: ReturnType<typeof useTheme>
+}) {
+  const [url, setUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    const objUrl = URL.createObjectURL(file)
+    setUrl(objUrl)
+    return () => URL.revokeObjectURL(objUrl)
+  }, [file])
+
+  return (
+    <div className="relative rounded overflow-hidden group" style={{ border: `1px solid ${t.colors.border}`, background: t.colors.bgInput }}>
+      {url && (
+        <img src={url} alt={file.name}
+             style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
+      )}
+      <div className="absolute inset-0 flex flex-col justify-between p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+           style={{ background: 'rgba(0,0,0,0.55)' }}>
+        <button
+          onClick={onRemove}
+          className="self-end rounded-full flex items-center justify-center"
+          style={{ width: 18, height: 18, background: t.colors.danger, color: '#fff' }}>
+          <X size={10} />
+        </button>
+        <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.8)', wordBreak: 'break-all', lineHeight: 1.3 }}>
+          {file.name.length > 14 ? file.name.slice(0, 12) + '…' : file.name}
+        </span>
+      </div>
+      {/* 미업로드 배지 */}
+      <div className="absolute top-1 left-1 rounded px-1"
+           style={{ background: '#f59e0b', fontSize: 8, color: '#fff', fontWeight: 700 }}>
+        대기
+      </div>
+    </div>
+  )
+}
+
+// ── 서버 이미지 썸네일 (업로드 완료) ─────────────────────────────────────────
+
+function ServerImageThumb({ targetId, filename, deleting, onDelete, t }: {
+  targetId: number
+  filename: string
+  deleting: boolean
+  onDelete: () => void
+  t: ReturnType<typeof useTheme>
+}) {
+  const imgUrl = api.getTargetImageUrl(targetId, filename)
+
+  return (
+    <div className="relative rounded overflow-hidden group"
+         style={{ border: `1px solid ${t.colors.border}`, background: t.colors.bgInput, opacity: deleting ? 0.5 : 1 }}>
+      <img src={imgUrl} alt={filename}
+           style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
+      <div className="absolute inset-0 flex flex-col justify-between p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+           style={{ background: 'rgba(0,0,0,0.55)' }}>
+        <button
+          onClick={onDelete}
+          disabled={deleting}
+          className="self-end rounded-full flex items-center justify-center"
+          style={{ width: 18, height: 18, background: t.colors.danger, color: '#fff' }}>
+          {deleting ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+        </button>
+        <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.8)', wordBreak: 'break-all', lineHeight: 1.3 }}>
+          {filename.length > 14 ? filename.slice(0, 12) + '…' : filename}
+        </span>
       </div>
     </div>
   )

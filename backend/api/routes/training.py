@@ -11,6 +11,7 @@ from typing import Annotated
 import cv2
 import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
 from backend.config import settings
@@ -366,3 +367,38 @@ def upload_stats():
             count = sum(1 for f in d.iterdir() if f.suffix.lower() in _ALLOWED_EXTS)
             result[d.name] = count
     return result
+
+
+@router.get("/images/{target_id}")
+def list_target_images(target_id: int):
+    """타겟별 업로드된 이미지 파일명 목록 반환"""
+    target_dir = _RAW_DIR / f"T{target_id}"
+    if not target_dir.exists():
+        return {"images": []}
+    images = sorted(
+        f.name for f in target_dir.iterdir()
+        if f.suffix.lower() in _ALLOWED_EXTS
+    )
+    return {"images": images}
+
+
+@router.get("/images/{target_id}/{filename}")
+def get_target_image(target_id: int, filename: str):
+    """타겟 이미지 파일 서빙"""
+    safe_name = Path(filename).name  # 경로 탐색 방지
+    image_path = _RAW_DIR / f"T{target_id}" / safe_name
+    if not image_path.exists() or image_path.suffix.lower() not in _ALLOWED_EXTS:
+        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
+    return FileResponse(str(image_path))
+
+
+@router.delete("/images/{target_id}/{filename}")
+def delete_target_image(target_id: int, filename: str):
+    """타겟 이미지 삭제"""
+    safe_name = Path(filename).name  # 경로 탐색 방지
+    image_path = _RAW_DIR / f"T{target_id}" / safe_name
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
+    image_path.unlink()
+    logger.info("Training image deleted", target_id=target_id, filename=safe_name)
+    return {"deleted": safe_name}

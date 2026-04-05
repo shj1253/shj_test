@@ -124,4 +124,9 @@ export const api = {
     return http.post('/training/upload', fd)
   },
   getUploadStats: () => http.get('/training/upload/stats'),
+  listTargetImages: (targetId: number) => http.get(`/training/images/${targetId}`),
+  getTargetImageUrl: (targetId: number, filename: string) =>
+    `${BASE_URL}/training/images/${targetId}/${encodeURIComponent(filename)}`,
+  deleteTargetImage: (targetId: number, filename: string) =>
+    http.delete(`/training/images/${targetId}/${encodeURIComponent(filename)}`),
 }
