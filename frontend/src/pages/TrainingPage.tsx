@@ -120,6 +120,7 @@ export default function TrainingPage() {
   const [uploadTarget, setUploadTarget] = useState(1)
   const [uploadFiles, setUploadFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
+  const [uploadRefreshKey, setUploadRefreshKey] = useState(0)
   const [uploadResult, setUploadResult] = useState<{ saved: number; skipped: string[] } | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [uploadStats, setUploadStats] = useState<Record<string, number>>({})
@@ -197,6 +198,7 @@ export default function TrainingPage() {
       const res = await api.uploadTrainingImages(uploadTarget, uploadFiles)
       setUploadResult({ saved: res.data.saved, skipped: res.data.skipped })
       setUploadFiles([])
+      setUploadRefreshKey(k => k + 1)
       const statsRes = await api.getUploadStats()
       setUploadStats(statsRes.data)
     } catch (e: unknown) {
@@ -581,6 +583,7 @@ export default function TrainingPage() {
         numTargets={numTargets}
         uploadTarget={uploadTarget}
         uploadFiles={uploadFiles}
+        refreshKey={uploadRefreshKey}
         onRemoveLocalFile={(i) => setUploadFiles(prev => prev.filter((_, j) => j !== i))}
         onUploadStatsChange={() => api.getUploadStats().then(r => setUploadStats(r.data)).catch(() => {})}
         t={t}
@@ -592,11 +595,12 @@ export default function TrainingPage() {
 // ── 이미지 미리보기 패널 ────────────────────────────────────────────────────
 
 function ImagePreviewPanel({
-  numTargets, uploadTarget, uploadFiles, onRemoveLocalFile, onUploadStatsChange, t,
+  numTargets, uploadTarget, uploadFiles, refreshKey, onRemoveLocalFile, onUploadStatsChange, t,
 }: {
   numTargets: number
   uploadTarget: number
   uploadFiles: File[]
+  refreshKey: number
   onRemoveLocalFile: (i: number) => void
   onUploadStatsChange: () => void
   t: ReturnType<typeof useTheme>
@@ -612,9 +616,10 @@ function ImagePreviewPanel({
     }).catch(() => {})
   }, [])
 
+  // numTargets 변경 또는 업로드 완료(refreshKey) 시 전체 갱신
   useEffect(() => {
     for (let i = 1; i <= numTargets; i++) fetchImages(i)
-  }, [numTargets, fetchImages])
+  }, [numTargets, fetchImages, refreshKey])
 
   // 업로드 타겟 바뀌면 해당 탭 자동 포커스
   useEffect(() => { setActiveTarget(uploadTarget) }, [uploadTarget])
