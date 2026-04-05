@@ -222,7 +222,13 @@ async def _run_training() -> None:
         # Step 2: 증강 (타겟별 정확히 n_per_target개 생성 — 클래스 균형 보장)
         def _augment() -> tuple[list[np.ndarray], list[np.ndarray], list[int]]:
             augmentor = FieldAugmentor.from_intensity(_current_config["augmentation"]["intensity"])
-            n_per_target = _current_config["augmentation"]["n_per_target"]
+            # Railway 512MB 한도 안전 캡: 총 이미지 수 × ~150KB ≤ ~180MB (모델+파이썬 오버헤드 제외)
+            # 총 상한 1200장 → 최대 피크 ~330MB (안전 마진 확보)
+            MAX_TOTAL = 1200
+            n_per_target = min(
+                _current_config["augmentation"]["n_per_target"],
+                max(1, MAX_TOTAL // max(1, len(target_images))),
+            )
             all_normal: list[np.ndarray] = []
             all_images: list[np.ndarray] = []
             all_labels: list[int] = []

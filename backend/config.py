@@ -66,7 +66,7 @@ class Settings(BaseSettings):
 
     # ── Augmentation ─────────────────────────────────────────────────
     aug_intensity: str = "medium"          # weak|medium_weak|medium|medium_strong|strong|extreme
-    aug_n_per_target: int = 500            # 타겟당 증강 수
+    aug_n_per_target: int = 200            # 타겟당 증강 수 (Railway 512MB 한도 고려: 200×4타겟=800장≈120MB)
 
     # ── Metrics ─────────────────────────────────────────────────────
     metrics_window_size: int = 100
