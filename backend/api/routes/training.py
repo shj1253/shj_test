@@ -219,41 +219,42 @@ async def _run_training() -> None:
         total_raw = sum(len(v) for v in target_images.values())
         await _broadcast(15, f"{len(target_images)}개 타겟, 총 {total_raw}장 로드됨. 증강 중...")
 
-        # Step 2: 증강 (타겟별 정확히 n_per_target개 생성 — 클래스 균형 보장)
-        def _augment() -> tuple[list[np.ndarray], list[np.ndarray], list[int]]:
-            augmentor = FieldAugmentor.from_intensity(_current_config["augmentation"]["intensity"])
-            # Railway 512MB 한도 안전 캡: 총 이미지 수 × ~150KB ≤ ~180MB (모델+파이썬 오버헤드 제외)
-            # 총 상한 1200장 → 최대 피크 ~330MB (안전 마진 확보)
-            MAX_TOTAL = 1200
-            n_per_target = min(
-                _current_config["augmentation"]["n_per_target"],
-                max(1, MAX_TOTAL // max(1, len(target_images))),
-            )
-            all_normal: list[np.ndarray] = []
-            all_images: list[np.ndarray] = []
-            all_labels: list[int] = []
-            for target_id, imgs in sorted(target_images.items()):
+        # Step 2: 증강 — 타겟별로 순차 처리 + 중간 broadcast
+        # (한 번에 처리하면 Railway proxy 60초 타임아웃 내 WS 메시지 전송 불가)
+        MAX_TOTAL = 1200
+        n_per_target = min(
+            _current_config["augmentation"]["n_per_target"],
+            max(1, MAX_TOTAL // max(1, len(target_images))),
+        )
+        augmentor = FieldAugmentor.from_intensity(_current_config["augmentation"]["intensity"])
+        all_images: list[np.ndarray] = []
+        all_labels: list[int] = []
+        sorted_targets = sorted(target_images.items())
+        n_targets = len(sorted_targets)
+
+        for step_i, (target_id, imgs) in enumerate(sorted_targets):
+            def _augment_one(tid=target_id, raw_imgs=imgs) -> list[np.ndarray]:
                 target_augmented: list[np.ndarray] = []
-                # 원본 이미지에서 순환하며 정확히 n_per_target개 생성
-                raw_cycle = imgs * (n_per_target // len(imgs) + 1)
-                for i, raw_img in enumerate(raw_cycle[:n_per_target]):
-                    n_each = max(1, n_per_target // len(imgs))
-                    aug = augmentor.generate(raw_img, n=n_each)
-                    target_augmented.extend(aug)
+                raw_cycle = raw_imgs * (n_per_target // len(raw_imgs) + 1)
+                for raw_img in raw_cycle[:n_per_target]:
+                    n_each = max(1, n_per_target // len(raw_imgs))
+                    target_augmented.extend(augmentor.generate(raw_img, n=n_each))
                     if len(target_augmented) >= n_per_target:
                         break
-                target_augmented = target_augmented[:n_per_target]
-                all_normal.extend(target_augmented)
-                all_images.extend(target_augmented)
-                all_labels.extend([target_id - 1] * len(target_augmented))
-            return all_normal, all_images, all_labels
+                return target_augmented[:n_per_target]
 
-        all_normal, all_images, all_labels = await loop.run_in_executor(None, _augment)
-        await _broadcast(35, f"증강 완료: {len(all_normal)}장 ({len(target_images)}개 타겟 균형). Gate 모델 학습 중...")
+            augmented = await loop.run_in_executor(None, _augment_one)
+            all_images.extend(augmented)
+            all_labels.extend([target_id - 1] * len(augmented))
+
+            pct = 15 + int((step_i + 1) / n_targets * 20)
+            await _broadcast(pct, f"T{target_id} 증강 완료 ({len(augmented)}장). {'다음 타겟 처리 중...' if step_i + 1 < n_targets else 'Gate 학습 준비 중...'}")
+
+        await _broadcast(35, f"증강 완료: {len(all_images)}장 ({n_targets}개 타겟 균형). Gate 모델 학습 중...")
 
         # Step 3: Gate 학습
         gate = registry.active_gate
-        await loop.run_in_executor(None, gate.fit, all_normal)
+        await loop.run_in_executor(None, gate.fit, all_images)
         await _broadcast(65, "Gate 학습 완료. Classifier 학습 중...")
 
         # Step 4: Gate 저장
