@@ -57,6 +57,7 @@ export const api = {
   uploadAndStartFile: (cameraId: string, form: FormData) =>
     http.post(`/camera/${cameraId}/upload-and-start`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,  // 파일 크기에 따라 시간이 달라지므로 타임아웃 없음
     }),
   cameraStatusById: (cameraId: string) =>
     http.get(`/camera/${cameraId}/status`),
