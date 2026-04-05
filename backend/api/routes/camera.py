@@ -104,8 +104,8 @@ async def upload_and_start(
     safe_name = Path(file.filename or "upload").name
     dest = _TEST_VIDEO_DIR / safe_name
     try:
-        with dest.open("wb") as f:
-            shutil.copyfileobj(file.file, f)
+        data = await file.read()  # 비동기 읽기
+        await asyncio.to_thread(dest.write_bytes, data)  # 블로킹 쓰기를 스레드로
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"파일 저장 실패: {e}")
 
