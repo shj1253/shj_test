@@ -60,8 +60,11 @@ export default function TrainingPage() {
     status: 'idle', progress: 0, message: '', result: null,
   })
 
+  const [wsConnected, setWsConnected] = useState(false)
+
   const handleTrainMsg = useCallback((data: unknown) => {
     const msg = data as { event: string; status: TrainStatus; progress: number; message: string; result?: Record<string, number> }
+    if (msg.event === 'ping') return  // keepalive — 무시
     if (msg.event === 'progress' || msg.event === 'completed' || msg.event === 'error' || msg.event === 'state') {
       setTrainState({
         status: msg.status ?? 'idle',
@@ -72,7 +75,7 @@ export default function TrainingPage() {
     }
   }, [])
 
-  useWebSocket('training', handleTrainMsg)
+  useWebSocket('training', handleTrainMsg, (online) => setWsConnected(online))
 
   // 마운트 시 현재 학습 상태 복원 (새로고침/페이지 재진입 대응)
   useEffect(() => {
@@ -83,6 +86,18 @@ export default function TrainingPage() {
       }
     }).catch(() => {})
   }, [])
+
+  // WS 끊김 시 HTTP 폴링 백업 (3초마다) — Railway 프록시 재연결 중에도 진행률 유지
+  useEffect(() => {
+    if (wsConnected || trainState.status !== 'running') return
+    const iv = setInterval(() => {
+      api.getTrainingStatus().then(res => {
+        const s = res.data as { status: TrainStatus; progress: number; message: string; result: Record<string, number> | null }
+        setTrainState({ status: s.status, progress: s.progress ?? 0, message: s.message ?? '', result: s.result ?? null })
+      }).catch(() => {})
+    }, 3000)
+    return () => clearInterval(iv)
+  }, [wsConnected, trainState.status])
 
   const handleStartTraining = async () => {
     try {
@@ -481,6 +496,22 @@ export default function TrainingPage() {
           {/* Progress */}
           {(trainState.status === 'running' || trainState.status === 'completed' || trainState.status === 'error') && (
             <div className="mt-3 space-y-2">
+              {/* WS 연결 상태 — 학습 중일 때만 표시 */}
+              {trainState.status === 'running' && (
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded" style={{
+                  background: wsConnected ? t.colors.success + '12' : t.colors.warning + '12',
+                  border: `1px solid ${wsConnected ? t.colors.success : t.colors.warning}25`,
+                }}>
+                  <div style={{
+                    width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                    background: wsConnected ? t.colors.success : t.colors.warning,
+                    animation: !wsConnected ? 'pulse 1s infinite' : 'none',
+                  }} />
+                  <span style={{ fontSize: 10, color: wsConnected ? t.colors.success : t.colors.warning }}>
+                    {wsConnected ? '실시간 연결됨' : '연결 재시도 중… (진행률 자동 갱신 중)'}
+                  </span>
+                </div>
+              )}
               {/* Progress bar */}
               <div className="rounded" style={{ height: 6, background: t.colors.bgInput, overflow: 'hidden' }}>
                 <div

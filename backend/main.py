@@ -308,7 +308,12 @@ async def ws_training(websocket: WebSocket):
             **_training_state,
         }, default=str))
         while True:
-            await websocket.receive_text()
+            try:
+                # 25초 대기 — Railway 프록시 60초 타임아웃 전에 keepalive 전송
+                await asyncio.wait_for(websocket.receive_text(), timeout=25.0)
+            except asyncio.TimeoutError:
+                # 클라이언트 메시지 없어도 서버→클라이언트 ping으로 연결 유지
+                await websocket.send_text(json.dumps({"event": "ping"}))
     except (WebSocketDisconnect, Exception):
         pass
     finally:
