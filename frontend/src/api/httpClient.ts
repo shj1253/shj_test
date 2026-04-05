@@ -89,6 +89,7 @@ export const api = {
 
   // Active Learning
   getALQueue: () => http.get('/al/queue'),
+  getSampleImage: (sampleId: string) => http.get(`/al/samples/${sampleId}/image`),
   submitLabel: (sampleId: string, label: number) =>
     http.post('/al/label', { sample_id: sampleId, label }),
   undoLabel: (sampleId?: string) =>
@@ -102,6 +103,10 @@ export const api = {
 
   // Pipeline control
   resetSequence: () => http.post('/metrics/reset'),
+
+  // Training run
+  startTraining: () => http.post('/training/run'),
+  getTrainingStatus: () => http.get('/training/status'),
 
   // Training config
   getTrainingConfig: () => http.get('/training/config'),

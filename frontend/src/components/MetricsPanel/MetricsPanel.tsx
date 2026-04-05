@@ -49,11 +49,29 @@ export default function MetricsPanel({ metrics: m }: Props) {
     )
   }
 
+  // 비전문가용 시스템 상태 요약
+  const f1Ok = m.f1 >= 0.85
+  const latOk = m.avg_latency_ms <= 200
+  const systemStatus = f1Ok && latOk ? '정상 작동 중' : !f1Ok ? '정확도 주의 필요' : '처리 속도 느림'
+  const statusColor = f1Ok && latOk ? t.colors.success : '#f59e0b'
+
   return (
     <div className="p-3">
       <div className="flex items-center justify-between mb-1">
         <div style={t.sectionHeader}>실시간 지표</div>
         <span style={{ fontSize: 9, color: t.colors.textDim, fontFamily: 'monospace' }}>{m.window_size}f</span>
+      </div>
+
+      {/* 비전문가용 상태 요약 */}
+      <div className="rounded px-2 py-1.5 mb-2 flex items-center gap-2"
+           style={{ background: statusColor + '15', border: `1px solid ${statusColor}30` }}>
+        <span style={{ fontSize: 16 }}>{f1Ok && latOk ? '✅' : '⚠️'}</span>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: statusColor }}>{systemStatus}</div>
+          <div style={{ fontSize: 9, color: t.colors.textDim }}>
+            정확도 {pct(m.f1)} · 처리속도 {ms(m.avg_latency_ms)}
+          </div>
+        </div>
       </div>
 
       {/* ── Stage 2: 이상 탐지 ── */}

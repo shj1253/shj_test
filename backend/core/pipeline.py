@@ -5,6 +5,7 @@ Gate → Classify → Sequence
 from __future__ import annotations
 
 import asyncio
+import functools
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -106,17 +107,17 @@ class InferencePipeline:
 
     # ── 단계별 실행 ───────────────────────────────────────────────────────
 
-    def _run_gate(self, frame: np.ndarray) -> GateResult:
+    def _run_gate(self, gate: BaseGateModel, frame: np.ndarray) -> GateResult:
         try:
-            return self.gate.predict(frame)
+            return gate.predict(frame)
         except ModelNotLoadedError:
             raise
         except Exception as e:
             raise InferenceError("Gate inference failed", detail=str(e)) from e
 
-    def _run_classify(self, frame: np.ndarray) -> ClassifyResult:
+    def _run_classify(self, classifier: BaseClassifierModel, frame: np.ndarray) -> ClassifyResult:
         try:
-            return self.classifier.predict(frame)
+            return classifier.predict(frame)
         except ModelNotLoadedError:
             raise
         except Exception as e:
@@ -137,7 +138,11 @@ class InferencePipeline:
         frame_id = str(uuid.uuid4())[:8]
         t_start = time.perf_counter()
 
-        bind_frame_context(frame_id, "gate", self.gate.name)
+        # Snapshot model references at frame boundary to avoid swap() race condition (H-1)
+        gate = self.gate
+        classifier = self.classifier
+
+        bind_frame_context(frame_id, "gate", gate.name)
 
         gate_result: GateResult | None = None
         classify_result: ClassifyResult | None = None
@@ -146,8 +151,8 @@ class InferencePipeline:
 
         try:
             # ── 1단: Gate ─────────────────────────────
-            gate_result = await asyncio.get_event_loop().run_in_executor(
-                None, self._run_gate, frame
+            gate_result = await asyncio.get_running_loop().run_in_executor(
+                None, functools.partial(self._run_gate, gate, frame)
             )
 
             if not gate_result.is_target:
@@ -159,9 +164,9 @@ class InferencePipeline:
                 )
             else:
                 # ── 2단: Classify ─────────────────────
-                bind_frame_context(frame_id, "classify", self.classifier.name)
-                classify_result = await asyncio.get_event_loop().run_in_executor(
-                    None, self._run_classify, frame
+                bind_frame_context(frame_id, "classify", classifier.name)
+                classify_result = await asyncio.get_running_loop().run_in_executor(
+                    None, functools.partial(self._run_classify, classifier, frame)
                 )
 
                 logger.debug(
@@ -199,7 +204,7 @@ class InferencePipeline:
             frame_id=frame_id,
             gate_result=gate_result or GateResult(
                 is_target=False, score=0.0, normalized_score=1.0,
-                in_margin=False, model_name="unknown"
+                in_margin=False, model_name="unknown", latency_ms=0.0
             ),
             classify_result=classify_result,
             sequence_result=sequence_result,
@@ -207,8 +212,8 @@ class InferencePipeline:
             error=error_msg,
         )
 
-        # 결과 콜백 호출
-        for cb in self._result_callbacks:
+        # 결과 콜백 호출 (M-1 fix: list() copy prevents ConcurrentModificationError)
+        for cb in list(self._result_callbacks):
             try:
                 await cb(result)
             except Exception as e:
@@ -217,20 +222,28 @@ class InferencePipeline:
         return result
 
     def run_sync(self, frame: np.ndarray) -> InferenceResult:
-        """동기 래퍼 (테스트 / 배치 평가용)"""
+        """동기 래퍼 (테스트 / 배치 평가 전용).
+
+        Warning (M-R7-1): asyncio 이벤트 루프가 이미 실행 ��인 환경(FastAPI/uvicorn)에서 호출하면
+        RuntimeError: This event loop is already running 발생.
+        프로덕션 코드에서는 async run()을 직접 호출하세요.
+        """
         return asyncio.get_event_loop().run_until_complete(self.run(frame))
 
     # ── 모델 교체 ─────────────────────────────────────────────────────────
 
-    def swap_gate(self, new_gate: BaseGateModel) -> None:
-        """런타임 중 Gate 모델 교체 (A/B 비교용)"""
-        old_name = self.gate.name
-        self.gate = new_gate
+    async def swap_gate(self, new_gate: BaseGateModel) -> None:
+        """런타임 중 Gate 모델 교체 — 락 보호로 추론 중 경쟁 조건 방지"""
+        async with self._lock:
+            old_name = self.gate.name
+            self.gate = new_gate
         logger.info("Gate swapped", old=old_name, new=new_gate.name)
 
-    def swap_classifier(self, new_classifier: BaseClassifierModel) -> None:
-        old_name = self.classifier.name
-        self.classifier = new_classifier
+    async def swap_classifier(self, new_classifier: BaseClassifierModel) -> None:
+        """런타임 중 Classifier 모델 교체 — 락 보호"""
+        async with self._lock:
+            old_name = self.classifier.name
+            self.classifier = new_classifier
         logger.info("Classifier swapped", old=old_name, new=new_classifier.name)
 
     def reset_sequence(self) -> None:

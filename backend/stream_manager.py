@@ -199,6 +199,12 @@ class StreamManager:
                     self._running = False
                     break
 
+                # C-3 fix: exponential backoff before retry (100ms → 1s → 5s)
+                backoff_s = min(5.0, 0.1 * (2 ** min(self._error_count - 1, 5)))
+                await asyncio.sleep(backoff_s)
+                # H-R6-3 fix: skip frame rate sleep after backoff to avoid stacking delays
+                continue
+
             # 프레임 레이트 조절
             elapsed = asyncio.get_event_loop().time() - loop_start
             sleep_time = max(0.0, interval_s - elapsed)
@@ -228,6 +234,7 @@ class StreamManager:
             if (self._debounce_votes[tid] >= DEBOUNCE_FRAMES
                     and tid != self._last_alert_target):
                 self._last_alert_target = tid
+                self._debounce_votes[tid] = 0  # C-1 fix: 발화 후 리셋 → 단일 프레임 재발화 방지
                 self._alert_occurrence[tid] = self._alert_occurrence.get(tid, 0) + 1
                 meta = get_meta(tid)
                 alert = {
@@ -270,6 +277,7 @@ class StreamManager:
                 snapshot = self.metrics_tracker.current_metrics
                 data = snapshot.to_dict()
                 data["camera_id"] = self.camera_id
+                data["stream_running"] = self._running  # 스트림 상태를 함께 전송
                 await ws_manager.broadcast("metrics", data)
             except Exception as e:
                 logger.warning("Metrics broadcast error", camera_id=self.camera_id, error=str(e))

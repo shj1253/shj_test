@@ -1,14 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
-import { Lock, Check, Square, AlertCircle, CheckCircle2, Loader2, Info, Upload, X, FolderOpen } from 'lucide-react'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { Lock, Check, Square, AlertCircle, CheckCircle2, Loader2, Info, Upload, X, FolderOpen, Play, RotateCcw } from 'lucide-react'
 import { api } from '../api/httpClient'
 import AugmentationControl from '../components/AugmentationControl/AugmentationControl'
 import { useTheme } from '../hooks/useTheme'
+import { useWebSocket } from '../api/wsClient'
 import type {
   AugIntensity,
   IntensityOption,
   PreprocessConfigState,
   PreprocessStep,
 } from '../types'
+
+type TrainStatus = 'idle' | 'running' | 'completed' | 'error'
+interface TrainState {
+  status: TrainStatus
+  progress: number
+  message: string
+  result: Record<string, number> | null
+}
 
 interface OptionalMeta {
   label: string
@@ -46,6 +55,47 @@ export default function TrainingPage() {
   const [status, setStatus] = useState<'idle' | 'saved' | 'error'>('idle')
   const [statusMsg, setStatusMsg] = useState('')
   const [offline, setOffline] = useState(false)
+
+  const [trainState, setTrainState] = useState<TrainState>({
+    status: 'idle', progress: 0, message: '', result: null,
+  })
+
+  const handleTrainMsg = useCallback((data: unknown) => {
+    const msg = data as { event: string; status: TrainStatus; progress: number; message: string; result?: Record<string, number> }
+    if (msg.event === 'progress' || msg.event === 'completed' || msg.event === 'error' || msg.event === 'state') {
+      setTrainState({
+        status: msg.status ?? 'idle',
+        progress: msg.progress ?? 0,
+        message: msg.message ?? '',
+        result: msg.result ?? null,
+      })
+    }
+  }, [])
+
+  useWebSocket('training', handleTrainMsg)
+
+  // 마운트 시 현재 학습 상태 복원 (새로고침/페이지 재진입 대응)
+  useEffect(() => {
+    api.getTrainingStatus().then(res => {
+      const s = res.data as { status: TrainStatus; progress: number; message: string; result: Record<string, number> | null }
+      if (s.status !== 'idle') {
+        setTrainState({ status: s.status, progress: s.progress ?? 0, message: s.message ?? '', result: s.result ?? null })
+      }
+    }).catch(() => {})
+  }, [])
+
+  const handleStartTraining = async () => {
+    try {
+      setTrainState({ status: 'running', progress: 0, message: '학습 시작 요청 중...', result: null })
+      await api.startTraining()
+    } catch (e: unknown) {
+      setTrainState(prev => ({
+        ...prev,
+        status: 'error',
+        message: e instanceof Error ? e.message : '학습 시작 실패',
+      }))
+    }
+  }
 
   const [mandatorySteps, setMandatorySteps] = useState<PreprocessStep[]>(DEFAULT_MANDATORY)
   const [optionalMeta, setOptionalMeta] = useState<Record<string, OptionalMeta>>(DEFAULT_OPTIONAL)
@@ -397,14 +447,96 @@ export default function TrainingPage() {
           )}
         </div>
 
+        {/* Training Run */}
+        <Section t={t} title="학습 실행">
+          <div style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 8 }}>
+            업로드된 이미지로 Gate(PatchCore) + Classifier(ResNet)를 학습합니다. 학습 전 설정을 저장하세요.
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleStartTraining}
+              disabled={trainState.status === 'running'}
+              style={{
+                ...t.btnPrimary,
+                background: trainState.status === 'running' ? t.colors.textDim : t.colors.accent,
+                cursor: trainState.status === 'running' ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {trainState.status === 'running'
+                ? <><Loader2 size={11} className="animate-spin" /> 학습 중</>
+                : <><Play size={11} /> 학습 시작</>
+              }
+            </button>
+            {trainState.status !== 'idle' && trainState.status !== 'running' && (
+              <button
+                onClick={() => setTrainState({ status: 'idle', progress: 0, message: '', result: null })}
+                style={t.btnSecondary}
+              >
+                <RotateCcw size={11} /> 초기화
+              </button>
+            )}
+          </div>
+
+          {/* Progress */}
+          {(trainState.status === 'running' || trainState.status === 'completed' || trainState.status === 'error') && (
+            <div className="mt-3 space-y-2">
+              {/* Progress bar */}
+              <div className="rounded" style={{ height: 6, background: t.colors.bgInput, overflow: 'hidden' }}>
+                <div
+                  className="h-full rounded transition-all"
+                  style={{
+                    width: `${trainState.progress}%`,
+                    background: trainState.status === 'error'
+                      ? t.colors.danger
+                      : trainState.status === 'completed'
+                        ? t.colors.success
+                        : t.colors.accent,
+                    transition: 'width 0.4s ease',
+                  }}
+                />
+              </div>
+
+              {/* Message */}
+              <div className="flex items-center gap-1.5">
+                {trainState.status === 'running' && <Loader2 size={11} className="animate-spin" style={{ color: t.colors.accent }} />}
+                {trainState.status === 'completed' && <CheckCircle2 size={11} style={{ color: t.colors.success }} />}
+                {trainState.status === 'error' && <AlertCircle size={11} style={{ color: t.colors.danger }} />}
+                <span style={{
+                  fontSize: 11,
+                  color: trainState.status === 'error'
+                    ? t.colors.danger
+                    : trainState.status === 'completed'
+                      ? t.colors.success
+                      : t.colors.textMuted,
+                }}>
+                  {trainState.message} {trainState.status === 'running' && `(${trainState.progress}%)`}
+                </span>
+              </div>
+
+              {/* Result metrics */}
+              {trainState.status === 'completed' && trainState.result && (
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {Object.entries(trainState.result).map(([k, v]) => (
+                    <span key={k} style={t.badge('info')}>
+                      {k}: {typeof v === 'number' ? v.toFixed(4) : v}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </Section>
+
         {/* Next steps */}
         <div className="rounded p-3" style={{ background: t.colors.bgInput, border: `1px solid ${t.colors.border}` }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: t.colors.textDim, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
-            다음 단계
+            워크플로우
           </div>
           <ol style={{ fontSize: 11, color: t.colors.textMuted, listStyle: 'decimal', paddingLeft: 16 }} className="space-y-0.5">
-            <li>위 "학습 데이터 업로드"에서 T1~T{numTargets} 이미지 업로드</li>
-            <li>설정 저장 후 터미널에서 학습 실행</li>
+            <li>T1~T{numTargets} 이미지 업로드</li>
+            <li>설정 저장</li>
+            <li><strong style={{ color: t.colors.text }}>학습 시작</strong> 클릭 → 진행률 확인</li>
             <li>학습 완료 후 모델 비교 탭에서 벤치마크 실행</li>
           </ol>
         </div>

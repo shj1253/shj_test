@@ -3,14 +3,18 @@
 """
 from __future__ import annotations
 
+import asyncio
+import functools
 from pathlib import Path
 from typing import Annotated
 
+import cv2
+import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
 from backend.config import settings
-from backend.data.augmentation import INTENSITY_LABELS, INTENSITY_PRESETS
+from backend.data.augmentation import INTENSITY_LABELS, INTENSITY_PRESETS, FieldAugmentor
 from backend.data.preprocessor import OPTIONAL_STEPS, FieldPreprocessor, PreprocessConfig
 from backend.logging_config import get_logger
 
@@ -157,6 +161,141 @@ def get_preprocess_options():
 
 _ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 _RAW_DIR = Path("artifacts/data/raw")
+_MODEL_DIR = Path("artifacts/models")
+
+# ── 학습 실행 상태 ────────────────────────────────────────────────────────────
+
+_training_state: dict = {"status": "idle", "progress": 0, "message": "", "result": None}
+_training_task: asyncio.Task | None = None
+
+
+async def _broadcast(progress: int, message: str) -> None:
+    from backend.api.websocket.manager import ws_manager
+    _training_state.update({"progress": progress, "message": message})
+    await ws_manager.broadcast("training", {
+        "event": "progress",
+        "status": "running",
+        "progress": progress,
+        "message": message,
+    })
+
+
+async def _run_training() -> None:
+    from backend.api.websocket.manager import ws_manager
+    from backend.models.registry import registry
+
+    global _training_state
+    _training_state = {"status": "running", "progress": 0, "message": "학습 준비 중...", "result": None}
+
+    try:
+        # Step 1: 이미지 로드
+        await _broadcast(5, "학습 이미지 로드 중...")
+        loop = asyncio.get_event_loop()
+
+        def _load_images() -> dict[int, list[np.ndarray]]:
+            target_images: dict[int, list[np.ndarray]] = {}
+            for target_id in range(1, _current_config["num_targets"] + 1):
+                target_dir = _RAW_DIR / f"T{target_id}"
+                if not target_dir.exists():
+                    continue
+                imgs = []
+                for f in sorted(target_dir.iterdir()):
+                    if f.suffix.lower() in _ALLOWED_EXTS:
+                        img = cv2.imread(str(f))
+                        if img is not None:
+                            imgs.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                if imgs:
+                    target_images[target_id] = imgs
+            return target_images
+
+        target_images = await loop.run_in_executor(None, _load_images)
+
+        if not target_images:
+            raise ValueError(
+                f"학습 이미지가 없습니다. 먼저 '학습 데이터 업로드'에서 T1~T{_current_config['num_targets']} 이미지를 업로드하세요."
+            )
+
+        total_raw = sum(len(v) for v in target_images.values())
+        await _broadcast(15, f"{len(target_images)}개 타겟, 총 {total_raw}장 로드됨. 증강 중...")
+
+        # Step 2: 증강 (타겟별 정확히 n_per_target개 생성 — 클래스 균형 보장)
+        def _augment() -> tuple[list[np.ndarray], list[np.ndarray], list[int]]:
+            augmentor = FieldAugmentor.from_intensity(_current_config["augmentation"]["intensity"])
+            n_per_target = _current_config["augmentation"]["n_per_target"]
+            all_normal: list[np.ndarray] = []
+            all_images: list[np.ndarray] = []
+            all_labels: list[int] = []
+            for target_id, imgs in sorted(target_images.items()):
+                target_augmented: list[np.ndarray] = []
+                # 원본 이미지에서 순환하며 정확히 n_per_target개 생성
+                raw_cycle = imgs * (n_per_target // len(imgs) + 1)
+                for i, raw_img in enumerate(raw_cycle[:n_per_target]):
+                    n_each = max(1, n_per_target // len(imgs))
+                    aug = augmentor.generate(raw_img, n=n_each)
+                    target_augmented.extend(aug)
+                    if len(target_augmented) >= n_per_target:
+                        break
+                target_augmented = target_augmented[:n_per_target]
+                all_normal.extend(target_augmented)
+                all_images.extend(target_augmented)
+                all_labels.extend([target_id - 1] * len(target_augmented))
+            return all_normal, all_images, all_labels
+
+        all_normal, all_images, all_labels = await loop.run_in_executor(None, _augment)
+        await _broadcast(35, f"증강 완료: {len(all_normal)}장 ({len(target_images)}개 타겟 균형). Gate 모델 학습 중...")
+
+        # Step 3: Gate 학습
+        gate = registry.active_gate
+        await loop.run_in_executor(None, gate.fit, all_normal)
+        await _broadcast(65, "Gate 학습 완료. Classifier 학습 중...")
+
+        # Step 4: Gate 저장
+        _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        gate_path = _MODEL_DIR / "gate_a.pkl"
+        await loop.run_in_executor(None, gate.save, gate_path)
+
+        # Step 5: Classifier 학습 (functools.partial로 클로저 캡처 방지)
+        clf = registry.active_classifier
+        _fine_tune = functools.partial(
+            clf.fine_tune, images=all_images, labels=all_labels, epochs=10
+        )
+        train_metrics = await loop.run_in_executor(None, _fine_tune)
+        await _broadcast(90, "Classifier 학습 완료. 모델 저장 중...")
+
+        # Step 6: Classifier 저장
+        clf_path = _MODEL_DIR / "classifier.pth"
+        await loop.run_in_executor(None, clf.save, clf_path)
+
+        # Step 7: 파이프라인 재초기화 (학습된 모델 즉시 반영)
+        from backend.main import reinit_pipeline
+        await reinit_pipeline()
+
+        # 완료
+        _training_state.update({
+            "status": "completed",
+            "progress": 100,
+            "message": f"학습 완료 — {len(all_images)}장 사용",
+            "result": train_metrics,
+        })
+        await ws_manager.broadcast("training", {
+            "event": "completed",
+            "status": "completed",
+            "progress": 100,
+            "message": _training_state["message"],
+            "result": train_metrics,
+        })
+        logger.info("Training completed", n_images=len(all_images))
+
+    except Exception as e:
+        _training_state.update({"status": "error", "message": str(e)})
+        from backend.api.websocket.manager import ws_manager
+        await ws_manager.broadcast("training", {
+            "event": "error",
+            "status": "error",
+            "progress": _training_state["progress"],
+            "message": str(e),
+        })
+        logger.error("Training failed", error=str(e), exc_info=True)
 
 
 @router.post("/upload")
@@ -174,17 +313,46 @@ async def upload_training_images(
     for f in files:
         if not f.filename:
             continue
-        ext = Path(f.filename).suffix.lower()
+        # S-5: 경로 탐색 방지 — 파일명만 추출 (../ 등 제거)
+        safe_name = Path(f.filename).name
+        ext = Path(safe_name).suffix.lower()
         if ext not in _ALLOWED_EXTS:
             skipped.append(f.filename)
             continue
         content = await f.read()
-        dest = target_dir / f.filename
+        dest = target_dir / safe_name
         dest.write_bytes(content)
         saved.append(f.filename)
 
     logger.info("Training images uploaded", target_id=target_id, saved=len(saved), skipped=len(skipped))
     return {"target_id": target_id, "saved": len(saved), "skipped": skipped}
+
+
+def _on_training_done(task: asyncio.Task) -> None:
+    """태스크 완료 콜백 — 미수집 예외 로깅"""
+    if not task.cancelled():
+        exc = task.exception()
+        if exc:
+            logger.error("Training task raised unhandled exception", error=str(exc), exc_info=exc)
+            _training_state.update({"status": "error", "message": str(exc)})
+
+
+@router.post("/run")
+async def run_training():
+    """업로드된 이미지로 Gate + Classifier 학습 실행"""
+    global _training_task
+    if _training_state["status"] == "running":
+        raise HTTPException(status_code=409, detail="이미 학습이 실행 중입니다. 완료 후 다시 시도하세요.")
+
+    _training_task = asyncio.create_task(_run_training())
+    _training_task.add_done_callback(_on_training_done)
+    return {"status": "started", "message": "학습을 시작했습니다. /ws/training으로 진행 상황을 확인하세요."}
+
+
+@router.get("/status")
+def get_training_status():
+    """현재 학습 상태 조회"""
+    return _training_state
 
 
 @router.get("/upload/stats")

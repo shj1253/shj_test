@@ -3,9 +3,16 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+import json
+from pathlib import Path
 
+from fastapi import APIRouter, HTTPException, Query
+from backend.logging_config import get_logger
+
+logger = get_logger(__name__)
 router = APIRouter(prefix="/metrics", tags=["metrics"])
+
+_OFFLINE_METRICS_PATH = Path("artifacts/metrics/offline_metrics.json")
 
 
 # ── KPI 정의 ──────────────────────────────────────────────────────────────
@@ -63,12 +70,14 @@ def _kpi_status(key: str, value: float, op: str, target, need_gt: bool, has_gt: 
         return "fail"
     elif op == "lte":
         if value <= target:               return "pass"
-        if value <= target * 1.2:         return "warn"
+        # M-R6-3 fix: symmetric ±10% warn margin (was 20%, now matches gte's 10%)
+        if value <= target * 1.1:         return "warn"
         return "fail"
     elif op == "range":
         lo, hi = target
         if lo <= value <= hi:             return "pass"
-        if lo * 0.8 <= value <= hi * 1.3: return "warn"
+        # H-3 fix: symmetric warn margin (±10%) instead of asymmetric (−20%/+30%)
+        if lo * 0.9 <= value <= hi * 1.1: return "warn"
         return "fail"
     return "na"
 
@@ -103,8 +112,11 @@ def build_kpi_report(snapshot: dict, offline: dict | None = None) -> dict:
     # 오프라인 값 병합
     merged = {**snapshot, **off}
 
-    # GT 보유 여부: window_size > 0 이고 accuracy > 0 이면 GT 있다고 간주
-    has_gt = merged.get("window_size", 0) > 0 and merged.get("accuracy", 0.0) > 0.0
+    # H-2 fix: use explicit has_gt flag from snapshot (accuracy=0 can mean all wrong, not no GT)
+    has_gt = bool(merged.get("has_gt", False))
+
+    # M-R7-2 fix: no data yet → mark all metrics na (0.0 defaults can produce false "pass")
+    no_data = merged.get("window_size", 0) == 0
 
     stages: dict[int, list] = {1: [], 2: [], 3: [], 4: [], 5: []}
     summary = {"total": 0, "pass": 0, "warn": 0, "fail": 0, "na": 0}
@@ -112,7 +124,8 @@ def build_kpi_report(snapshot: dict, offline: dict | None = None) -> dict:
     for (key, label, op, target, unit, priority, stage, need_gt) in KPI_DEFINITIONS:
         raw = merged.get(key, 0.0)
         value = float(raw) if raw is not None else 0.0
-        status = _kpi_status(key, value, op, target, need_gt, has_gt)
+        # M-R7-2 fix: no frames yet → na (not fake "pass" from 0.0 defaults)
+        status = "na" if no_data else _kpi_status(key, value, op, target, need_gt, has_gt)
 
         entry = {
             "key": key,
@@ -133,10 +146,10 @@ def build_kpi_report(snapshot: dict, offline: dict | None = None) -> dict:
     cm_diag = merged.get("cm_diagonal_ratio", [])
     cm_kpi = []
     for i, v in enumerate(cm_diag):
-        if has_gt:
-            status = "pass" if v >= 0.93 else ("warn" if v >= 0.85 else "fail")
-        else:
+        if no_data or not has_gt:
             status = "na"
+        else:
+            status = "pass" if v >= 0.93 else ("warn" if v >= 0.85 else "fail")
         cm_kpi.append({
             "key": f"cm_diag_T{i+1}",
             "label": f"CM 대각 비율 T{i+1}",
@@ -161,8 +174,16 @@ def build_kpi_report(snapshot: dict, offline: dict | None = None) -> dict:
     }
 
 
-# 오프라인 측정값 임시 저장 (서버 재시작 시 초기화)
-_offline_metrics: dict = {}
+# 오프라인 측정값 — 서버 재시작 후에도 유지 (artifacts/metrics/offline_metrics.json)
+def _load_offline_metrics() -> dict:
+    if _OFFLINE_METRICS_PATH.exists():
+        try:
+            return json.loads(_OFFLINE_METRICS_PATH.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("Failed to load offline metrics from disk", error=str(e))
+    return {}
+
+_offline_metrics: dict = _load_offline_metrics()
 
 
 # ── 엔드포인트 ─────────────────────────────────────────────────────────────
@@ -189,9 +210,17 @@ async def kpi_report(camera_id: str = "0"):
 
 @router.post("/kpi/offline")
 async def set_offline_metrics(data: dict):
-    """오프라인 측정값 등록 (FID, coverage_diversity, downstream_f1_gain 등)"""
+    """오프라인 측정값 등록 (FID, coverage_diversity, downstream_f1_gain 등) — 디스크 영속화"""
     global _offline_metrics
     _offline_metrics.update(data)
+    try:
+        _OFFLINE_METRICS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _OFFLINE_METRICS_PATH.write_text(
+            json.dumps(_offline_metrics, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.warning("Failed to persist offline metrics to disk", error=str(e))
     return {"status": "ok", "stored": list(_offline_metrics.keys())}
 
 

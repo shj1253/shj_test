@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Play, Trophy, ArrowUp, Upload, Image } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Play, Trophy, ArrowUp, Upload, Image, AlertCircle, Info } from 'lucide-react'
 import { api } from '../api/httpClient'
 import { useTheme } from '../hooks/useTheme'
 
@@ -9,6 +9,7 @@ interface BenchmarkResult {
   pipeline_a: Record<string, number | string>
   pipeline_b: Record<string, number | string>
   comparison: Record<string, number>
+  label_info?: { labeled: number; unlabeled: number; tip: string }
 }
 
 const METRIC_LABELS: Record<string, string> = {
@@ -30,6 +31,17 @@ export default function ModelComparePage() {
   const [result, setResult] = useState<BenchmarkResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [files, setFiles] = useState<File[]>([])
+  const [modelStatus, setModelStatus] = useState<{ gate_a: boolean; gate_b: boolean } | null>(null)
+
+  useEffect(() => {
+    api.listModels().then(res => {
+      const gates: { key: string; is_loaded: boolean }[] = res.data.gates ?? []
+      setModelStatus({
+        gate_a: gates.some(g => g.key === 'gate_a' && g.is_loaded),
+        gate_b: gates.some(g => g.key === 'gate_b' && g.is_loaded),
+      })
+    }).catch(() => {})
+  }, [result])
 
   const handleFiles = (fileList: FileList | null) => {
     if (!fileList) return
@@ -61,18 +73,7 @@ export default function ModelComparePage() {
       const res = await api.compareModelsUpload(fd)
       setResult(res.data as BenchmarkResult)
     } catch (e: unknown) {
-      // Fallback: try path-based API
-      try {
-        const res = await api.compareModels({
-          gate_a_key: 'gate_a',
-          gate_b_key: 'gate_b',
-          classifier_key: 'classifier',
-          test_images_dir: 'artifacts/data/raw',
-        })
-        setResult(res.data as BenchmarkResult)
-      } catch (e2: unknown) {
-        setError(e2 instanceof Error ? e2.message : '벤치마크 실패')
-      }
+      setError(e instanceof Error ? e.message : '벤치마크 실패')
     } finally {
       setLoading(false)
     }
@@ -136,23 +137,57 @@ export default function ModelComparePage() {
         {error && <p style={{ fontSize: 11, color: t.colors.danger, marginTop: 4 }}>{error}</p>}
       </div>
 
-      {/* Info */}
-      {!result && !loading && (
-        <div className="rounded p-3" style={{ background: t.colors.bgPanel, border: `1px solid ${t.colors.border}` }}>
-          <div style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 4, fontWeight: 500 }}>비교 대상</div>
-          <div className="space-y-1" style={{ fontSize: 11 }}>
-            <div><span style={{ color: t.colors.textHeading, fontWeight: 500 }}>Pipeline A</span> <span style={{ color: t.colors.textDim }}>-- PatchCore Gate + ResNet Classifier</span></div>
-            <div><span style={{ color: t.colors.textHeading, fontWeight: 500 }}>Pipeline B</span> <span style={{ color: t.colors.textDim }}>-- EfficientNet Gate + ResNet Classifier</span></div>
-          </div>
-          <p style={{ fontSize: 10, color: t.colors.textDim, marginTop: 6 }}>
-            두 모델을 모두 학습한 후에 비교를 실행하세요.
-          </p>
+      {/* Model readiness */}
+      {modelStatus && (
+        <div className="rounded p-3 space-y-1.5" style={{ background: t.colors.bgPanel, border: `1px solid ${t.colors.border}` }}>
+          <div style={{ fontSize: 11, color: t.colors.textMuted, fontWeight: 500, marginBottom: 4 }}>모델 준비 상태</div>
+          {[
+            { key: 'gate_a', label: 'Pipeline A', desc: 'PatchCore Gate + ResNet' },
+            { key: 'gate_b', label: 'Pipeline B', desc: 'EfficientNet Gate + ResNet' },
+          ].map(({ key, label, desc }) => {
+            const loaded = modelStatus[key as 'gate_a' | 'gate_b']
+            return (
+              <div key={key} className="flex items-center gap-2">
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: loaded ? t.colors.success : t.colors.warning,
+                  flexShrink: 0, display: 'inline-block',
+                }} />
+                <span style={{ fontSize: 11, color: t.colors.textHeading, fontWeight: 500 }}>{label}</span>
+                <span style={{ fontSize: 10, color: t.colors.textDim }}>{desc}</span>
+                {!loaded && (
+                  <span style={{ fontSize: 10, color: t.colors.warning }}>미학습</span>
+                )}
+              </div>
+            )
+          })}
+          {!modelStatus.gate_b && (
+            <div className="flex items-start gap-1.5 mt-2 rounded px-2 py-1.5" style={{
+              background: t.colors.warning + '12', border: `1px solid ${t.colors.warning}25`,
+            }}>
+              <Info size={11} style={{ color: t.colors.warning, marginTop: 1, flexShrink: 0 }} />
+              <span style={{ fontSize: 10, color: t.colors.warning }}>
+                Pipeline B(EfficientNet)가 미학습 상태입니다. <code style={{ background: t.colors.bgInput, padding: '0 2px' }}>POST /models/load</code>로 gate_b를 등록하거나, 사전학습 탭에서 학습 후 <code style={{ background: t.colors.bgInput, padding: '0 2px' }}>POST /models/swap-gate</code>로 교체하세요.
+              </span>
+            </div>
+          )}
         </div>
       )}
 
       {/* Result */}
       {result && (
         <>
+          {result.label_info && result.label_info.unlabeled > 0 && (
+            <div className="flex items-start gap-1.5 rounded px-3 py-2" style={{
+              background: t.colors.warning + '12',
+              border: `1px solid ${t.colors.warning}25`,
+            }}>
+              <AlertCircle size={11} style={{ color: t.colors.warning, marginTop: 1, flexShrink: 0 }} />
+              <span style={{ fontSize: 10, color: t.colors.warning }}>
+                {result.label_info.unlabeled}개 이미지 레이블 미인식 — 분류 정확도 측정 불가. {result.label_info.tip}
+              </span>
+            </div>
+          )}
           <div className="rounded p-3" style={{
             background: t.colors.bgPanel,
             border: `1px solid ${result.winner === 'TIE' ? t.colors.border : t.colors.warning + '40'}`,
@@ -166,6 +201,55 @@ export default function ModelComparePage() {
             <p style={{ fontSize: 11, color: t.colors.textMuted }}>{result.winner_reason}</p>
           </div>
 
+          {/* ── 핵심 지표 막대 차트 ── */}
+          <div className="rounded p-3 space-y-3" style={{ background: t.colors.bgPanel, border: `1px solid ${t.colors.border}` }}>
+            <div style={t.sectionHeader}>핵심 지표 비교</div>
+            {(['f1_macro', 'accuracy', 'gate_tpr', 'avg_total_ms'] as const).map(key => {
+              const label = METRIC_LABELS[key] ?? key
+              const rawA = result.pipeline_a[key] as number
+              const rawB = result.pipeline_b[key] as number
+              if (rawA == null || rawB == null) return null
+              const lowerIsBetter = key.endsWith('_ms')
+              const max = Math.max(rawA, rawB) * (lowerIsBetter ? 1 : 1)
+              const pctA = max === 0 ? 0 : Math.min(100, (rawA / max) * 100)
+              const pctB = max === 0 ? 0 : Math.min(100, (rawB / max) * 100)
+              const aWins = lowerIsBetter ? rawA < rawB : rawA > rawB
+              const bWins = lowerIsBetter ? rawB < rawA : rawB > rawA
+              const colorA = aWins ? t.colors.success : bWins ? t.colors.textDim : t.colors.accent
+              const colorB = bWins ? t.colors.success : aWins ? t.colors.textDim : t.colors.accent
+
+              return (
+                <div key={key}>
+                  <div className="flex justify-between mb-1">
+                    <span style={{ fontSize: 10, color: t.colors.textMuted, fontWeight: 600 }}>{label}</span>
+                    <span style={{ fontSize: 9, color: t.colors.textDim }}>{lowerIsBetter ? '낮을수록 좋음' : '높을수록 좋음'}</span>
+                  </div>
+                  <div className="space-y-1">
+                    {[{ label: 'A', pct: pctA, val: rawA, color: colorA, wins: aWins },
+                      { label: 'B', pct: pctB, val: rawB, color: colorB, wins: bWins }].map(({ label: pl, pct, val, color, wins }) => (
+                      <div key={pl} className="flex items-center gap-2">
+                        <span style={{ fontSize: 10, fontWeight: 700, color, width: 18, textAlign: 'right', fontFamily: 'monospace', flexShrink: 0 }}>{pl}</span>
+                        <div className="flex-1 rounded-full overflow-hidden" style={{ height: 10, background: t.colors.bgInput }}>
+                          <div style={{
+                            height: '100%', width: `${pct}%`,
+                            background: color,
+                            borderRadius: 999,
+                            transition: 'width 0.6s ease',
+                            boxShadow: wins ? `0 0 6px ${color}60` : 'none',
+                          }} />
+                        </div>
+                        <span style={{ fontSize: 10, fontFamily: 'monospace', color, fontWeight: wins ? 700 : 400, width: 52, textAlign: 'left', flexShrink: 0 }}>
+                          {renderMetricValue(key, val)}{wins && ' ▲'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ── 상세 수치 테이블 ── */}
           <div className="rounded overflow-hidden" style={{ background: t.colors.bgPanel, border: `1px solid ${t.colors.border}` }}>
             <div className="grid grid-cols-3" style={{ background: t.colors.bgInput }}>
               <div className="p-2" style={t.sectionHeader}>Metric</div>

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type {
   InferenceResult, MetricsSnapshot, ALSample, SequenceState, AppMode
 } from '../types'
@@ -168,24 +169,35 @@ interface NotifStore {
 
 let _notifSeq = 0
 
-export const useNotifStore = create<NotifStore>((set) => ({
-  notifications: [],
+export const useNotifStore = create<NotifStore>()(
+  persist(
+    (set) => ({
+      notifications: [],
 
-  push: (n) => {
-    const id = String(++_notifSeq)
-    set((s) => ({
-      notifications: [
-        ...s.notifications.slice(-19),  // 최대 20개
-        { ...n, id, timestamp: new Date().toISOString() },
-      ],
-    }))
-  },
+      push: (n) => {
+        const id = String(++_notifSeq)
+        set((s) => ({
+          notifications: [
+            ...s.notifications.slice(-49),  // 최대 50개 유지
+            { ...n, id, timestamp: new Date().toISOString() },
+          ],
+        }))
+      },
 
-  dismiss: (id) =>
-    set((s) => ({ notifications: s.notifications.filter(n => n.id !== id) })),
+      dismiss: (id) =>
+        set((s) => ({ notifications: s.notifications.filter(n => n.id !== id) })),
 
-  dismissAll: () => set({ notifications: [] }),
-}))
+      dismissAll: () => set({ notifications: [] }),
+    }),
+    {
+      name: 'cannon-notifications',  // localStorage key
+      // retryFn은 직렬화 불가 → 저장 제외
+      partialize: (s) => ({
+        notifications: s.notifications.map(({ retryFn: _, ...rest }) => rest),
+      }),
+    }
+  )
+)
 
 // ── 편의 함수: API 에러를 notification으로 변환 ───────────────────────────
 

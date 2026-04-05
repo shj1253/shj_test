@@ -332,6 +332,15 @@ export default function MetricsPage() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
+      {/* 설명 배너 */}
+      <div className="flex items-center gap-2 px-4 py-1.5 flex-shrink-0"
+           style={{ background: t.colors.accent + '12', borderBottom: `1px solid ${t.colors.accent}25` }}>
+        <Info size={12} style={{ color: t.colors.accent, flexShrink: 0 }} />
+        <span style={{ fontSize: 11, color: t.colors.textMuted }}>
+          카메라가 운영 중일 때 ML 모델 성능 지표가 실시간으로 업데이트됩니다. 카메라 시작은 <strong style={{ color: t.colors.text }}>실시간 검출</strong> 화면에서 하세요.
+        </span>
+      </div>
+
       {/* Top bar */}
       <div className="flex items-center gap-2 px-4 py-2 flex-shrink-0"
            style={{ background: t.colors.bgPanel, borderBottom: `1px solid ${t.colors.border}` }}>

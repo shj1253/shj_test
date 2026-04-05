@@ -3,6 +3,9 @@ Active Learning API — 큐 조회 / 레이블 제출 / Undo / 재학습
 """
 from __future__ import annotations
 
+import base64
+
+import cv2
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -168,6 +171,27 @@ async def trigger_training(req: TrainRequest):
     except Exception as e:
         logger.error("Training failed", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/samples/{sample_id}/image")
+async def get_sample_image(sample_id: str):
+    """AL 샘플 프레임 이미지 반환 (base64 JPEG)"""
+    from backend.main import get_al_engine
+    engine = get_al_engine()
+    if engine is None:
+        raise HTTPException(status_code=503, detail="AL engine not initialized")
+    try:
+        sample = engine.queue.get_sample(sample_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    if sample.frame is None:
+        raise HTTPException(status_code=404, detail="프레임 데이터가 없습니다 (evicted)")
+
+    bgr = cv2.cvtColor(sample.frame, cv2.COLOR_RGB2BGR)
+    _, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
+    return {"image": f"data:image/jpeg;base64,{b64}"}
 
 
 @router.get("/stats")

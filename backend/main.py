@@ -22,6 +22,7 @@ from backend.metrics.realtime_tracker import RealtimeMetricsTracker
 from backend.models.registry import registry
 from backend.stream_manager import StreamManager
 
+
 setup_logging(settings.log_level)
 logger = get_logger(__name__)
 
@@ -34,6 +35,21 @@ _metrics_broadcast_tasks: dict[str, asyncio.Task] = {}
 
 def get_stream_manager(camera_id: str = "0") -> StreamManager | None:
     return _stream_managers.get(camera_id)
+
+
+def get_pipeline(camera_id: str = "0") -> InferencePipeline | None:
+    mgr = get_stream_manager(camera_id)
+    return mgr.pipeline if mgr else None
+
+
+def get_al_engine(camera_id: str = "0") -> ALEngine | None:
+    mgr = get_stream_manager(camera_id)
+    return mgr.al_engine if mgr else None
+
+
+def get_metrics_tracker(camera_id: str = "0") -> RealtimeMetricsTracker | None:
+    mgr = get_stream_manager(camera_id)
+    return mgr.metrics_tracker if mgr else None
 
 
 def list_stream_managers() -> dict[str, StreamManager]:
@@ -99,8 +115,8 @@ async def reinit_pipeline(camera_id: str | None = None) -> None:
     for cid in targets:
         if cid in _stream_managers:
             mgr = _stream_managers[cid]
-            mgr.pipeline.swap_gate(gate)
-            mgr.pipeline.swap_classifier(clf)
+            await mgr.pipeline.swap_gate(gate)
+            await mgr.pipeline.swap_classifier(clf)
 
     logger.info("Pipeline reinitialized", cameras=targets)
 
@@ -130,6 +146,12 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down")
     for task in _metrics_broadcast_tasks.values():
         task.cancel()
+    # 학습 태스크 취소 (진행 중이면 안전하게 중단)
+    from backend.api.routes.training import _training_task, _training_state
+    if _training_task and not _training_task.done():
+        logger.warning("Training task cancelled due to server shutdown")
+        _training_task.cancel()
+        _training_state.update({"status": "error", "message": "서버 종료로 학습이 중단되었습니다"})
     for mgr in _stream_managers.values():
         await mgr.stop()
 
@@ -167,8 +189,11 @@ app.include_router(training.router)
 
 @app.get("/health", tags=["system"])
 async def health():
+    stream_statuses = {cid: mgr._running for cid, mgr in _stream_managers.items()}
+    any_active = any(stream_statuses.values())
     return {
-        "status": "ok",
+        "status": "ok" if (any_active or not _stream_managers) else "degraded",
+        "stream_running": stream_statuses,
         "pipeline": len(_stream_managers) > 0,
         "cameras": list(_stream_managers.keys()),
         "models": registry.list_gates() + registry.list_classifiers(),
@@ -218,7 +243,9 @@ async def ws_stream_camera(websocket: WebSocket, camera_id: str):
     try:
         while True:
             await websocket.receive_text()
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
         ws_manager.disconnect(websocket, channel)
 
 
@@ -230,7 +257,9 @@ async def ws_stream_default(websocket: WebSocket):
     try:
         while True:
             await websocket.receive_text()
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
         ws_manager.disconnect(websocket, channel)
 
 
@@ -241,7 +270,9 @@ async def ws_alerts(websocket: WebSocket):
     try:
         while True:
             await websocket.receive_text()
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
         ws_manager.disconnect(websocket, "alerts")
 
 
@@ -249,17 +280,39 @@ async def ws_alerts(websocket: WebSocket):
 async def ws_metrics(websocket: WebSocket):
     """실시간 메트릭 스트림"""
     await ws_manager.connect(websocket, "metrics")
-    mgr = get_stream_manager("0")
-    if mgr:
-        import json
-        await websocket.send_text(
-            json.dumps(mgr.metrics_tracker.current_metrics.to_dict(), default=str)
-        )
     try:
+        mgr = get_stream_manager("0")
+        if mgr:
+            import json
+            await websocket.send_text(
+                json.dumps(mgr.metrics_tracker.current_metrics.to_dict(), default=str)
+            )
         while True:
             await websocket.receive_text()
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
         ws_manager.disconnect(websocket, "metrics")
+
+
+@app.websocket("/ws/training")
+async def ws_training(websocket: WebSocket):
+    """학습 진행 상태 실시간 스트림"""
+    await ws_manager.connect(websocket, "training")
+    try:
+        # 현재 학습 상태를 즉시 전송 (페이지 재진입 시 복원)
+        from backend.api.routes.training import _training_state
+        import json
+        await websocket.send_text(json.dumps({
+            "event": "state",
+            **_training_state,
+        }, default=str))
+        while True:
+            await websocket.receive_text()
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        ws_manager.disconnect(websocket, "training")
 
 
 @app.websocket("/ws/al")
@@ -284,7 +337,9 @@ async def ws_al(websocket: WebSocket):
                         })
                     except Exception as e:
                         await websocket.send_json({"error": str(e)})
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
         ws_manager.disconnect(websocket, "al")
 
 

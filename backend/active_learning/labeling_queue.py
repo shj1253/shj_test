@@ -6,6 +6,7 @@ from __future__ import annotations
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Deque
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -60,8 +61,11 @@ class LabelingQueue:
         self,
         max_size: int = 1000,
         queue_dir: Path | None = None,
+        max_labeled_size: int | None = None,
     ) -> None:
         self.max_size = max_size
+        # C-4 fix: cap labeled dict to prevent unbounded memory growth
+        self.max_labeled_size: int = max_labeled_size or max(50, max_size // 5)
         self.queue_dir = queue_dir or Path("artifacts/data/al_queue")
 
         self._unlabeled: dict[str, ALSample] = {}   # sample_id → sample
@@ -69,26 +73,62 @@ class LabelingQueue:
         self._undo_stack: list[LabelAction] = []
         self._total_added: int = 0
 
+        # H-4 fix: frame fingerprint dedup — tracks _unlabeled frames only
+        self._frame_prints: dict[str, bytes] = {}   # sample_id → fingerprint
+        self._print_set: set[bytes] = set()         # O(1) lookup
+
+        # C-R6-1 fix: audit trail for evicted labeled samples (no frame, metadata only)
+        # C-R7-1 fix: bounded deque so audit trail itself cannot grow unbounded
+        self._evicted_labels: deque[dict] = deque(maxlen=1000)  # [{sample_id, label, labeled_at, evicted_at}]
+
+    @staticmethod
+    def _frame_fingerprint(frame: np.ndarray) -> bytes:
+        """Lightweight frame fingerprint using 8×8 downsampled intensity grid."""
+        h, w = frame.shape[:2]
+        step_h, step_w = max(1, h // 8), max(1, w // 8)
+        thumb = frame[::step_h, ::step_w][:8, :8]
+        if thumb.ndim == 3:
+            thumb = thumb.mean(axis=2)
+        return thumb.astype(np.uint8).tobytes()
+
     # ── 추가 ──────────────────────────────────────────────────────────────
 
     def push(self, sample: ALSample) -> bool:
         """
-        샘플 추가. 중복(같은 priority 범위) 제거 후 추가.
+        샘플 추가. 중복 프레임 제거 + 우선순위 기반 eviction.
 
         Returns:
-            True if added, False if full or duplicate
+            True if added, False if full/duplicate/lower-priority
         """
+        # H-4 fix: reject duplicate frames by fingerprint
+        if sample.frame is not None:
+            fp = self._frame_fingerprint(sample.frame)
+            if fp in self._print_set:
+                return False
+        else:
+            fp = None
+
         if len(self._unlabeled) >= self.max_size:
-            # 우선순위 낮은 것 제거 후 추가
+            # 우선순위 낮은 것 제거 후 추가 (tie-break: 오래된 것 우선 제거)
             lowest_id = min(
                 self._unlabeled,
-                key=lambda k: self._unlabeled[k].priority_score
+                key=lambda k: (
+                    self._unlabeled[k].priority_score,
+                    -(self._unlabeled[k].added_at.timestamp()),
+                )
             )
             if self._unlabeled[lowest_id].priority_score >= sample.priority_score:
                 return False  # 새 샘플이 더 낮은 우선순위 → 버림
-            del self._unlabeled[lowest_id]
+            evicted_id = lowest_id
+            self._unlabeled.pop(evicted_id)
+            evicted_fp = self._frame_prints.pop(evicted_id, None)
+            if evicted_fp:
+                self._print_set.discard(evicted_fp)
 
         self._unlabeled[sample.sample_id] = sample
+        if fp is not None:
+            self._frame_prints[sample.sample_id] = fp
+            self._print_set.add(fp)
         self._total_added += 1
 
         logger.debug(
@@ -149,9 +189,40 @@ class LabelingQueue:
             raise SampleNotFoundError(f"Sample {sample_id} not found in unlabeled queue")
 
         sample = self._unlabeled.pop(sample_id)
+        # Remove from fingerprint tracking (no longer in unlabeled)
+        evicted_fp = self._frame_prints.pop(sample_id, None)
+        if evicted_fp:
+            self._print_set.discard(evicted_fp)
+
         sample.label = label
         sample.labeled_at = datetime.now()
         self._labeled[sample_id] = sample
+
+        # C-4 fix: evict oldest labeled sample if over capacity to prevent memory leak
+        if len(self._labeled) > self.max_labeled_size:
+            oldest_id = min(
+                self._labeled,
+                key=lambda k: self._labeled[k].labeled_at or datetime.min,
+            )
+            evicted = self._labeled.pop(oldest_id)
+            # C-R6-1 fix: record in audit trail before evicting (silent data loss prevention)
+            self._evicted_labels.append({
+                "sample_id": oldest_id,
+                "label": evicted.label,
+                "labeled_at": evicted.labeled_at.isoformat() if evicted.labeled_at else None,
+                "evicted_at": datetime.now().isoformat(),
+            })
+            evicted.frame = None  # explicit frame memory release
+            # Also remove from undo stack if present
+            self._undo_stack = [a for a in self._undo_stack if a.sample_id != oldest_id]
+            # C-R6-1 fix: warning level so operators can detect training data loss
+            logger.warning(
+                "Labeled sample evicted due to capacity limit — call clear_labeled() more frequently",
+                sample_id=oldest_id[:8],
+                label=evicted.label,
+                labeled_queue_size=len(self._labeled),
+                evicted_total=len(self._evicted_labels),
+            )
 
         action = LabelAction(
             sample_id=sample_id,
@@ -181,23 +252,44 @@ class LabelingQueue:
         if not self._undo_stack:
             raise LabelingError("No labels to undo")
 
+        # H-R8-2 fix: peek action FIRST, validate BEFORE removing from undo_stack
+        # (removing then raising LabelingError leaves undo_stack permanently modified — retry impossible)
         if sample_id is None:
-            action = self._undo_stack.pop()
+            action = self._undo_stack[-1]  # peek
         else:
             matching = [a for a in self._undo_stack if a.sample_id == sample_id]
             if not matching:
                 raise SampleNotFoundError(f"No label action for {sample_id}")
-            action = matching[-1]
-            self._undo_stack.remove(action)
+            action = matching[-1]  # peek
 
         target_id = action.sample_id
         if target_id not in self._labeled:
+            # H-R7-1 fix: distinguish evicted samples from truly missing ones
+            evicted_ids = {e["sample_id"] for e in self._evicted_labels}
+            if target_id in evicted_ids:
+                raise LabelingError(
+                    f"Sample {target_id[:8]} was evicted from labeled cache — cannot undo",
+                    detail="The labeled sample was removed to prevent memory overflow. "
+                           "Call clear_labeled() more frequently to avoid eviction.",
+                )
             raise SampleNotFoundError(f"Labeled sample {target_id} not found")
+
+        # Validation passed — now commit removal from undo_stack
+        if sample_id is None:
+            self._undo_stack.pop()
+        else:
+            self._undo_stack.remove(action)
 
         sample = self._labeled.pop(target_id)
         sample.label = None
         sample.labeled_at = None
         self._unlabeled[target_id] = sample
+
+        # Restore fingerprint tracking
+        if sample.frame is not None:
+            fp = self._frame_fingerprint(sample.frame)
+            self._frame_prints[target_id] = fp
+            self._print_set.add(fp)
 
         logger.info(
             "Label undone",
@@ -215,6 +307,9 @@ class LabelingQueue:
         """
         if sample_id in self._unlabeled:
             del self._unlabeled[sample_id]
+            fp = self._frame_prints.pop(sample_id, None)
+            if fp:
+                self._print_set.discard(fp)
             logger.info("Sample skipped/removed", sample_id=sample_id[:8])
             return
         if sample_id in self._labeled:
@@ -234,6 +329,7 @@ class LabelingQueue:
             "total_added": self._total_added,
             "undo_stack_depth": len(self._undo_stack),
             "capacity": self.max_size,
+            "evicted_labeled_count": len(self._evicted_labels),  # C-R6-1: data loss indicator
         }
 
     def clear_labeled(self) -> list[ALSample]:
@@ -241,20 +337,40 @@ class LabelingQueue:
         labeled = list(self._labeled.values())
         self._labeled.clear()
         self._undo_stack.clear()
+        # labeled samples were already removed from fingerprint set at label() time
         logger.info("Labeled samples cleared", count=len(labeled))
         return labeled
 
     # ── 체크포인트 ────────────────────────────────────────────────────────
 
     def save_checkpoint(self) -> None:
-        """큐 상태 디스크 저장"""
+        """큐 상태 + 프레임 데이터 디스크 저장 (C-3 fix: 프레임을 .npy로 분리 저장)"""
         self.queue_dir.mkdir(parents=True, exist_ok=True)
+        frames_dir = self.queue_dir / "frames"
+        frames_dir.mkdir(exist_ok=True)
+
+        unlabeled_data: dict = {}
+        labeled_data: dict = {}
+        frames_saved = 0
+
+        for k, v in self._unlabeled.items():
+            if v.frame is not None:
+                np.save(frames_dir / f"{k}.npy", v.frame)
+                frames_saved += 1
+            unlabeled_data[k] = {**v.__dict__, "frame": None}
+
+        for k, v in self._labeled.items():
+            if v.frame is not None:
+                np.save(frames_dir / f"{k}.npy", v.frame)
+                frames_saved += 1
+            labeled_data[k] = {**v.__dict__, "frame": None}
+
         data = {
-            "unlabeled": {k: {**v.__dict__, "frame": None} for k, v in self._unlabeled.items()},
-            "labeled": {k: {**v.__dict__, "frame": None} for k, v in self._labeled.items()},
+            "unlabeled": unlabeled_data,
+            "labeled": labeled_data,
             "undo_stack": [a.__dict__ for a in self._undo_stack],
             "total_added": self._total_added,
         }
         with open(self.queue_dir / "queue_checkpoint.pkl", "wb") as f:
             pickle.dump(data, f)
-        logger.info("AL queue checkpoint saved")
+        logger.info("AL queue checkpoint saved", frames_saved=frames_saved)

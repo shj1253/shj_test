@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Play, Square, RotateCcw, Radio, Plus, X, Video, VideoOff,
+  Play, Square, Radio, Plus, X, Video, VideoOff,
   AlertTriangle, Info, CheckCircle2, XCircle, Camera, ChevronDown, ChevronRight,
-  WifiOff, RefreshCw, FileVideo, CheckCheck, Filter
+  WifiOff, RefreshCw, FileVideo, CheckCheck, Filter, Volume2, VolumeX, Wifi, BrainCircuit
 } from 'lucide-react'
 import { useWebSocket } from '../api/wsClient'
 import { useMetricsStore, useNotifStore, pushApiError } from '../store'
@@ -13,6 +13,52 @@ import type { DetectionAlert, InferenceResult, MetricsSnapshot, AlertSeverity } 
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 const MAX_ALERTS = 50
+
+// T1~T4 한글 공식 이름 (비전문가 현장 작업자용)
+const TARGET_KOREAN: Record<number, string> = {
+  1: 'T1 — 초기 설정 화면',
+  2: 'T2 — 메뉴 선택 화면',
+  3: 'T3 — 파라미터 입력 화면',
+  4: 'T4 — 확인/완료 화면',
+}
+
+// 시퀀스 상태 → 진행 단계
+const SEQ_STEP: Record<string, number> = {
+  WAIT_T1: 0, WAIT_T2: 1, WAIT_T3: 2, WAIT_T4: 3, COMPLETE: 4,
+}
+
+// 소리 알림 (Web Audio API — 외부 파일 불필요)
+function playAlertBeep(severity: AlertSeverity) {
+  try {
+    const ctx = new AudioContext()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    const freq = severity === 'error' ? 920 : severity === 'warning' ? 660 : 440
+    osc.frequency.value = freq
+    osc.type = severity === 'error' ? 'square' : 'sine'
+    gain.gain.setValueAtTime(0.25, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (severity === 'error' ? 0.8 : 0.4))
+    osc.start()
+    osc.stop(ctx.currentTime + (severity === 'error' ? 0.8 : 0.4))
+    // 오류는 두 번 울림
+    if (severity === 'error') {
+      const osc2 = ctx.createOscillator()
+      const gain2 = ctx.createGain()
+      osc2.connect(gain2)
+      gain2.connect(ctx.destination)
+      osc2.frequency.value = freq * 1.2
+      osc2.type = 'square'
+      gain2.gain.setValueAtTime(0.2, ctx.currentTime + 0.5)
+      gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.1)
+      osc2.start(ctx.currentTime + 0.5)
+      osc2.stop(ctx.currentTime + 1.1)
+    }
+  } catch {
+    // 브라우저가 오디오 컨텍스트를 지원하지 않는 경우 무시
+  }
+}
 
 const SEVERITY_COLOR: Record<AlertSeverity, string> = {
   error:   '#ef4444',
@@ -90,11 +136,13 @@ function AlertCard({ alert, compact = false, onDismiss, t }: {
         <Icon size={13} style={{ color: isAcknowledged ? t.colors.textDim : color, flexShrink: 0 }} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <span style={{ fontSize: 10, fontWeight: 700, color: isAcknowledged ? t.colors.textDim : color, fontFamily: 'monospace' }}>
+            <span style={{ fontSize: 9, fontWeight: 800, color: isAcknowledged ? t.colors.textDim : color,
+                           background: (isAcknowledged ? t.colors.textDim : color) + '20',
+                           borderRadius: 3, padding: '1px 5px', fontFamily: 'monospace', flexShrink: 0 }}>
               T{alert.target_id}
             </span>
             <span style={{ fontSize: 11, fontWeight: 600, color: t.colors.text }} className="truncate">
-              {alert.target_name}
+              {TARGET_KOREAN[alert.target_id] ?? alert.target_name}
             </span>
             {(alert.occurrence_count ?? 0) > 1 && (
               <span style={{ fontSize: 9, background: color + '20', color, borderRadius: 10, padding: '0 5px', fontWeight: 700 }}>
@@ -190,9 +238,9 @@ function AlertToast({ alert, onDismiss, onAck, t }: {
   const [showSteps, setShowSteps] = useState(false)
 
   useEffect(() => {
-    const timer = setTimeout(onDismiss, 10000)
+    const timer = setTimeout(onAck, 30000)
     return () => clearTimeout(timer)
-  }, [onDismiss])
+  }, [onAck])
 
   return (
     <div
@@ -209,8 +257,12 @@ function AlertToast({ alert, onDismiss, onAck, t }: {
         <Icon size={14} style={{ color }} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <span style={{ fontSize: 12, fontWeight: 700, color }}>
-              [{severityLabel(alert.severity)}] T{alert.target_id}
+            <span style={{ fontSize: 11, fontWeight: 800, color,
+                           background: color + '20', borderRadius: 3, padding: '1px 6px', fontFamily: 'monospace' }}>
+              T{alert.target_id}
+            </span>
+            <span style={{ fontSize: 11, fontWeight: 700, color }}>
+              [{severityLabel(alert.severity)}]
             </span>
             {(alert.occurrence_count ?? 0) > 1 && (
               <span style={{ fontSize: 9, background: color + '20', color, borderRadius: 10, padding: '0 5px', fontWeight: 700 }}>
@@ -218,11 +270,11 @@ function AlertToast({ alert, onDismiss, onAck, t }: {
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: t.colors.text }} className="truncate">
-            {alert.target_name}
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.colors.text }} className="truncate">
+            {TARGET_KOREAN[alert.target_id] ?? alert.target_name}
           </div>
         </div>
-        <button onClick={onDismiss} style={{ color: t.colors.textDim, flexShrink: 0 }}>
+        <button onClick={onAck} style={{ color: t.colors.textDim, flexShrink: 0 }} title="확인 처리">
           <X size={12} />
         </button>
       </div>
@@ -273,20 +325,14 @@ function AlertToast({ alert, onDismiss, onAck, t }: {
         <button
           onClick={onAck}
           className="flex-1 flex items-center justify-center gap-1 rounded py-1"
-          style={{ background: color + '20', border: `1px solid ${color}40`, fontSize: 11, fontWeight: 700, color }}>
-          <CheckCheck size={11} /> 확인
-        </button>
-        <button
-          onClick={onDismiss}
-          className="flex items-center justify-center gap-1 rounded py-1 px-2"
-          style={{ background: t.colors.bgInput, border: `1px solid ${t.colors.border}`, fontSize: 11, color: t.colors.textDim }}>
-          닫기
+          style={{ background: color + '20', border: `1px solid ${color}40`, fontSize: 12, fontWeight: 700, color }}>
+          <CheckCheck size={12} /> 확인 (조치 완료)
         </button>
       </div>
 
       {/* 프로그레스 바 */}
       <div style={{ height: 3, background: color + '40' }}>
-        <div style={{ height: '100%', background: color, animation: 'shrink 10s linear forwards' }} />
+        <div style={{ height: '100%', background: color, animation: 'shrink 30s linear forwards' }} />
       </div>
     </div>
   )
@@ -294,9 +340,10 @@ function AlertToast({ alert, onDismiss, onAck, t }: {
 
 // ── 카메라 셀 ──────────────────────────────────────────────────────────────
 
-function CameraCell({ cameraId, onAlert, t }: {
+function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   cameraId: string
   onAlert: (alert: DetectionAlert) => void
+  soundEnabled: boolean
   t: ReturnType<typeof useTheme>
 }) {
   const { push: pushNotif } = useNotifStore()
@@ -305,17 +352,23 @@ function CameraCell({ cameraId, onAlert, t }: {
   const [isStreaming, setIsStreaming] = useState(false)
   const [showFeed, setShowFeed] = useState(true)
   const [error, setError] = useState<{ msg: string; hint?: string } | null>(null)
-  const [wsError, setWsError] = useState(false)
+  const [wsOnline, setWsOnline] = useState(false)
+  const [wsReconnectIn, setWsReconnectIn] = useState<number | null>(null)
+  const [startLoading, setStartLoading] = useState(false)
   const [showFileInput, setShowFileInput] = useState(false)
   const [filePath, setFilePath] = useState('')
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const feedUrl = `${BASE_URL}/camera/${cameraId}/feed`
 
+  // C-2 fix: 컴포넌트 언마운트 시 타이머 정리 → 언마운트 후 setState 오류 방지
+  useEffect(() => () => {
+    if (alertTimerRef.current) clearTimeout(alertTimerRef.current)
+  }, [])
+
   const handleMsg = useCallback((data: unknown) => {
     const d = data as any
     if (d.frame_id) {
       setLastResult(d as InferenceResult)
-      setWsError(false)
     }
     if (d.event === 'error') {
       setError({ msg: d.message ?? '스트림 오류', hint: d.hint })
@@ -327,16 +380,22 @@ function CameraCell({ cameraId, onAlert, t }: {
       const alert = d.alert as DetectionAlert
       setActiveAlert(alert)
       onAlert(alert)
+      if (soundEnabled) playAlertBeep(alert.severity)
       if (alertTimerRef.current) clearTimeout(alertTimerRef.current)
-      alertTimerRef.current = setTimeout(() => setActiveAlert(null), 12000)
+      alertTimerRef.current = setTimeout(() => setActiveAlert(null), 30000)
     }
-  }, [onAlert])
+  }, [onAlert, soundEnabled])
 
-  useWebSocket(`stream/${cameraId}`, handleMsg)
+  useWebSocket(`stream/${cameraId}`, handleMsg, (online, reconnectIn) => {
+    setWsOnline(online)
+    setWsReconnectIn(online ? null : (reconnectIn ?? null))
+  })
 
   const clearError = () => setError(null)
 
   const handleStart = async () => {
+    if (startLoading) return  // prevent double-click race
+    setStartLoading(true)
     try {
       setError(null)
       await api.startCameraById(cameraId, parseInt(cameraId) || 0)
@@ -348,11 +407,14 @@ function CameraCell({ cameraId, onAlert, t }: {
       const hint = anyErr?.response?.data?.hint
       setError({ msg, hint })
       pushApiError(pushNotif, err, `카메라 ${cameraId} 시작 실패`)
+    } finally {
+      setStartLoading(false)
     }
   }
 
   const handleStartFile = async () => {
-    if (!filePath.trim()) return
+    if (!filePath.trim() || startLoading) return
+    setStartLoading(true)
     try {
       setError(null)
       await api.startFileById(cameraId, filePath.trim(), true)
@@ -364,6 +426,8 @@ function CameraCell({ cameraId, onAlert, t }: {
       const hint = anyErr?.response?.data?.hint
       setError({ msg, hint })
       pushApiError(pushNotif, err, `파일 소스 시작 실패`)
+    } finally {
+      setStartLoading(false)
     }
   }
 
@@ -399,25 +463,53 @@ function CameraCell({ cameraId, onAlert, t }: {
         <span style={{ fontSize: 11, fontWeight: 600, color: t.colors.text, fontFamily: 'monospace' }}>
           CAM {cameraId}
         </span>
-        {isStreaming && <span style={{ fontSize: 9, color: t.colors.success, fontWeight: 600 }}>● LIVE</span>}
+        {/* WS 연결 상태 */}
+        <span className="flex items-center gap-0.5"
+              title={wsOnline ? '서버 연결됨' : `서버 연결 끊김 — ${wsReconnectIn ?? 3}초 후 재연결`}>
+          {wsOnline
+            ? <Wifi size={9} style={{ color: t.colors.success }} />
+            : <>
+                <WifiOff size={9} style={{ color: t.colors.danger }} />
+                {wsReconnectIn != null && (
+                  <span style={{ fontSize: 8, color: t.colors.danger, fontFamily: 'monospace' }}>{wsReconnectIn}s</span>
+                )}
+              </>
+          }
+        </span>
+        {/* 모니터링 상태 */}
+        {isStreaming
+          ? <span style={{ fontSize: 9, color: t.colors.success, fontWeight: 700,
+                           background: t.colors.success + '20', borderRadius: 3, padding: '1px 4px' }}>
+              ● 감시 중
+            </span>
+          : <span style={{ fontSize: 9, color: t.colors.textDim, fontWeight: 600 }}>대기</span>
+        }
         {activeAlert && (
-          <span style={{ fontSize: 9, fontWeight: 700, color: alertColor! }}>
-            {severityLabel(activeAlert.severity).toUpperCase()}
+          <span style={{ fontSize: 9, fontWeight: 700, color: alertColor!,
+                         background: alertColor! + '20', borderRadius: 3, padding: '1px 4px' }}>
+            ⚠ {severityLabel(activeAlert.severity)}
           </span>
         )}
         <div className="flex gap-0.5 ml-auto">
-          <button onClick={isStreaming ? handleStop : handleStart}
-                  style={{ ...isStreaming ? t.btnDanger : t.btnPrimary, padding: '1px 5px', fontSize: 10 }}>
-            {isStreaming ? <><Square size={9} /> 중지</> : <><Play size={9} /> 시작</>}
-          </button>
-          <button onClick={() => setShowFileInput(v => !v)} title="파일 소스로 시작"
-                  style={{ ...t.btnSecondary, padding: '1px 5px', fontSize: 10 }}>
-            <FileVideo size={9} />
-          </button>
-          <button onClick={() => setShowFeed(v => !v)}
-                  style={{ ...t.btnSecondary, padding: '1px 5px', fontSize: 10 }}>
-            {showFeed ? <VideoOff size={9} /> : <Video size={9} />}
-          </button>
+          {/* 스트리밍 중일 때만 헤더에 중지/파일/피드 버튼 노출. 대기 중 시작은 블랙 박스 중앙 버튼으로 통일 */}
+          {isStreaming ? (
+            <>
+              <button onClick={handleStop}
+                      style={{ ...t.btnDanger, padding: '1px 5px', fontSize: 10 }}>
+                <Square size={9} /> 중지
+              </button>
+              <button onClick={() => setShowFeed(v => !v)}
+                      title={showFeed ? '피드 숨기기' : '피드 보이기'}
+                      style={{ ...t.btnSecondary, padding: '1px 5px', fontSize: 10 }}>
+                {showFeed ? <VideoOff size={9} /> : <Video size={9} />}
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setShowFileInput(v => !v)} title="파일 소스로 시작"
+                    style={{ ...t.btnSecondary, padding: '1px 5px', fontSize: 10 }}>
+              <FileVideo size={9} /> 파일
+            </button>
+          )}
         </div>
       </div>
 
@@ -432,8 +524,9 @@ function CameraCell({ cameraId, onAlert, t }: {
             placeholder="파일 경로 (mp4, avi, jpg 등)"
             style={{ ...t.input, flex: 1, fontSize: 10 }}
           />
-          <button onClick={handleStartFile} style={{ ...t.btnPrimary, padding: '1px 6px', fontSize: 10 }}>
-            재생
+          <button onClick={handleStartFile} disabled={startLoading}
+                  style={{ ...t.btnPrimary, padding: '1px 6px', fontSize: 10, opacity: startLoading ? 0.6 : 1 }}>
+            {startLoading ? '시작 중...' : '재생'}
           </button>
         </div>
       )}
@@ -452,9 +545,9 @@ function CameraCell({ cameraId, onAlert, t }: {
               💡 {error.hint}
             </p>
           )}
-          <button onClick={handleStart}
-                  style={{ ...t.btnSecondary, fontSize: 9, padding: '1px 6px', marginLeft: 18 }}>
-            <RefreshCw size={9} /> 다시 시도
+          <button onClick={handleStart} disabled={startLoading}
+                  style={{ ...t.btnSecondary, fontSize: 10, padding: '2px 8px', marginLeft: 18, opacity: startLoading ? 0.6 : 1 }}>
+            <RefreshCw size={10} /> {startLoading ? '시작 중...' : '다시 시도'}
           </button>
         </div>
       )}
@@ -464,16 +557,46 @@ function CameraCell({ cameraId, onAlert, t }: {
         {isStreaming && showFeed ? (
           <img src={feedUrl} alt={`cam ${cameraId}`}
                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
-        ) : (
+        ) : isStreaming ? (
           <div className="flex items-center justify-center h-full" style={{ color: t.colors.textDim }}>
             <div className="text-center space-y-1">
               <Video size={24} style={{ margin: '0 auto', opacity: 0.2 }} />
-              <p style={{ fontSize: 10, opacity: 0.4 }}>{isStreaming ? '피드 숨김' : '대기 중'}</p>
+              <p style={{ fontSize: 10, opacity: 0.4 }}>피드 숨김</p>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center space-y-3">
+              <Camera size={32} style={{ margin: '0 auto', color: 'rgba(255,255,255,0.15)' }} />
+              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', margin: 0, fontWeight: 600 }}>
+                카메라가 꺼져 있습니다
+              </p>
+              <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', margin: 0 }}>
+                아래 버튼을 눌러 감시를 시작하세요
+              </p>
+              <button
+                onClick={handleStart}
+                disabled={startLoading}
+                className="flex items-center gap-2 rounded-lg"
+                style={{
+                  background: t.colors.success,
+                  color: '#fff',
+                  fontSize: 15,
+                  fontWeight: 700,
+                  padding: '10px 24px',
+                  border: 'none',
+                  cursor: startLoading ? 'not-allowed' : 'pointer',
+                  opacity: startLoading ? 0.7 : 1,
+                  boxShadow: `0 0 20px ${t.colors.success}60`,
+                }}>
+                <Play size={16} /> {startLoading ? '시작 중...' : '감시 시작하기'}
+              </button>
+              <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)' }}>CAM {cameraId}</p>
             </div>
           </div>
         )}
 
-        {/* 추론 오버레이 (좌상단) */}
+        {/* 추론 오버레이 (좌상단) — 개발자용 기술 지표 */}
         {lastResult && isStreaming && (
           <div className="absolute top-1 left-1 rounded px-1.5 py-1 space-y-0.5"
                style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
@@ -502,6 +625,54 @@ function CameraCell({ cameraId, onAlert, t }: {
               <span style={{ fontSize: 9, color: '#aaa', fontFamily: 'monospace' }}>
                 {lastResult.total_latency_ms.toFixed(0)}ms
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* 시퀀스 진행 표시 (우상단) — 현장 작업자용 */}
+        {isStreaming && (
+          <div className="absolute top-1 right-1 rounded px-1.5 py-1"
+               style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}>
+            <div className="flex items-center gap-1">
+              {[1, 2, 3, 4].map(step => {
+                const seqState = lastResult?.sequence?.current_state ?? 'WAIT_T1'
+                const currentStep = SEQ_STEP[seqState] ?? 0
+                const isComplete = seqState === 'COMPLETE'
+                const isDone = isComplete || currentStep > step
+                const isCurrent = currentStep === step - 1 && !isComplete
+                return (
+                  <div key={step} className="flex items-center gap-0.5">
+                    <div style={{
+                      width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 9, fontWeight: 800,
+                      background: isComplete ? t.colors.success + 'cc'
+                        : isDone ? t.colors.success + '80'
+                        : isCurrent ? t.colors.accent + 'cc'
+                        : 'rgba(255,255,255,0.12)',
+                      border: `1px solid ${isComplete || isDone ? t.colors.success : isCurrent ? t.colors.accent : 'rgba(255,255,255,0.2)'}`,
+                      color: isDone || isComplete || isCurrent ? '#fff' : 'rgba(255,255,255,0.4)',
+                      boxShadow: isCurrent ? `0 0 6px ${t.colors.accent}80` : 'none',
+                    }}>
+                      {isDone || isComplete ? '✓' : step}
+                    </div>
+                    {step < 4 && (
+                      <div style={{
+                        width: 8, height: 1,
+                        background: isDone ? t.colors.success : 'rgba(255,255,255,0.15)',
+                      }} />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <div style={{
+              fontSize: 8, textAlign: 'center', marginTop: 2, fontWeight: 600,
+              color: lastResult?.sequence?.current_state === 'COMPLETE' ? t.colors.success : 'rgba(255,255,255,0.5)',
+            }}>
+              {lastResult?.sequence?.current_state === 'COMPLETE'
+                ? '✓ 검사 완료!'
+                : `T${(SEQ_STEP[lastResult?.sequence?.current_state ?? 'WAIT_T1'] ?? 0) + 1} 대기 중`}
             </div>
           </div>
         )}
@@ -612,8 +783,32 @@ export default function LivePage() {
   const [alerts, setAlerts] = useState<DetectionAlert[]>([])
   const [toasts, setToasts] = useState<Array<DetectionAlert & { toastId: number }>>([])
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all')
+  const [soundEnabled, setSoundEnabled] = useState(true)
+  const [pipelineModel, setPipelineModel] = useState<{ gate?: string; classifier?: string } | null>(null)
+  const [alQueueSize, setAlQueueSize] = useState<number | null>(null)
+  const [alTriggering, setAlTriggering] = useState(false)
 
   const toastSeq = useRef(0)
+
+  // 파이프라인 상태 (로드된 모델명)
+  useEffect(() => {
+    api.pipelineStatus().then(res => {
+      const d = res.data
+      if (d) setPipelineModel({ gate: d.gate_model, classifier: d.classifier_model })
+    }).catch(() => {})
+  }, [])
+
+  // AL 큐 크기 주기적 갱신 (10초마다)
+  useEffect(() => {
+    const fetch = () => {
+      api.alStats().then(res => {
+        setAlQueueSize(res.data?.unlabeled_count ?? 0)
+      }).catch(() => {})
+    }
+    fetch()
+    const iv = setInterval(fetch, 10000)
+    return () => clearInterval(iv)
+  }, [])
 
   // 전체 알림 WS 구독
   useWebSocket('alerts', useCallback((data: unknown) => {
@@ -623,8 +818,9 @@ export default function LivePage() {
       setAlerts(prev => [alert, ...prev].slice(0, MAX_ALERTS))
       const id = ++toastSeq.current
       setToasts(prev => [...prev, { ...alert, toastId: id }])
+      if (soundEnabled) playAlertBeep(alert.severity)
     }
-  }, []))
+  }, [soundEnabled]))
 
   // 메트릭 구독
   useWebSocket('metrics', useCallback((data: unknown) => {
@@ -641,14 +837,17 @@ export default function LivePage() {
     const toast = toasts.find(t => t.toastId === toastId)
     setToasts(prev => prev.filter(t => t.toastId !== toastId))
     if (toast) {
+      // IMP-1 fix: camera_id + timestamp 조합으로 교차 카메라 오인식 방지
       setAlerts(prev => prev.map(a =>
-        a.timestamp === toast.timestamp ? { ...a, acknowledged: true } : a
+        a.camera_id === toast.camera_id && a.timestamp === toast.timestamp
+          ? { ...a, acknowledged: true }
+          : a
       ))
     }
   }, [toasts])
 
-  const dismissAlert = useCallback((timestamp: string) => {
-    setAlerts(prev => prev.filter(a => a.timestamp !== timestamp))
+  const dismissAlert = useCallback((cameraId: string, timestamp: string) => {
+    setAlerts(prev => prev.filter(a => !(a.camera_id === cameraId && a.timestamp === timestamp)))
   }, [])
 
   const acknowledgeAllAlerts = useCallback(() => {
@@ -694,6 +893,39 @@ export default function LivePage() {
       </div>
 
       <div className="h-full flex flex-col">
+        {/* 시스템 상태 헤더 */}
+        <div className="flex items-center gap-3 px-3 py-1 flex-shrink-0"
+             style={{ background: t.colors.bgPanel, borderBottom: `1px solid ${t.colors.border}`, minHeight: 30 }}>
+          <span style={{ fontSize: 10, color: t.colors.textDim }}>파이프라인 모델:</span>
+          {pipelineModel ? (
+            <>
+              <span style={{ fontSize: 10, fontWeight: 600, color: t.colors.accent, fontFamily: 'monospace' }}>
+                Gate: {pipelineModel.gate ?? '미로드'}
+              </span>
+              <span style={{ fontSize: 10, color: t.colors.textDim }}>|</span>
+              <span style={{ fontSize: 10, fontWeight: 600, color: t.colors.accent, fontFamily: 'monospace' }}>
+                Cls: {pipelineModel.classifier ?? '미로드'}
+              </span>
+            </>
+          ) : (
+            <span style={{ fontSize: 10, color: t.colors.textDim }}>로드 중...</span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setSoundEnabled(v => !v)}
+              title={soundEnabled ? '소리 끄기' : '소리 켜기'}
+              className="flex items-center gap-1 rounded px-2 py-0.5"
+              style={{
+                fontSize: 10, color: soundEnabled ? t.colors.success : t.colors.textDim,
+                background: soundEnabled ? t.colors.success + '15' : 'transparent',
+                border: `1px solid ${soundEnabled ? t.colors.success + '40' : t.colors.border}`,
+              }}>
+              {soundEnabled ? <Volume2 size={11} /> : <VolumeX size={11} />}
+              {soundEnabled ? '소리 켜짐' : '소리 꺼짐'}
+            </button>
+          </div>
+        </div>
+
         {/* 전역 에러 배너 */}
         <AppNotifBanner t={t} />
 
@@ -726,6 +958,35 @@ export default function LivePage() {
                 />
                 <button onClick={addCamera} style={t.btnPrimary}><Plus size={11} /></button>
               </div>
+            </div>
+
+            {/* AL 빠른 트리거 */}
+            <div className="px-2 py-1.5 flex-shrink-0" style={{ background: t.colors.bgPanel, borderTop: `1px solid ${t.colors.border}` }}>
+              <div className="flex items-center justify-between mb-1">
+                <span style={t.sectionHeader}>능동학습</span>
+                {alQueueSize != null && alQueueSize > 0 && (
+                  <span style={{ ...t.badge('warning'), fontSize: 9, padding: '0 4px' }}>
+                    {alQueueSize}건 대기
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={async () => {
+                  if (alTriggering) return
+                  setAlTriggering(true)
+                  try { await api.triggerTraining() } catch { /* 무시 */ }
+                  finally { setAlTriggering(false) }
+                }}
+                disabled={alTriggering || !alQueueSize}
+                style={{
+                  ...t.btnPrimary,
+                  width: '100%', fontSize: 10, justifyContent: 'center',
+                  opacity: alTriggering || !alQueueSize ? 0.5 : 1,
+                  cursor: alTriggering || !alQueueSize ? 'not-allowed' : 'pointer',
+                }}>
+                <BrainCircuit size={10} />
+                {alTriggering ? 'AL 학습 중...' : 'AL 학습 트리거'}
+              </button>
             </div>
 
             {/* 최근 알림 요약 */}
@@ -774,18 +1035,18 @@ export default function LivePage() {
             }}
           >
             {cameras.map(id => (
-              <CameraCell key={id} cameraId={id} onAlert={handleAlert} t={t} />
+              <CameraCell key={id} cameraId={id} onAlert={handleAlert} soundEnabled={soundEnabled} t={t} />
             ))}
           </div>
 
           {/* ── 우측: 알림 이력 + 메트릭 ── */}
-          <div className="flex flex-col gap-px flex-shrink-0" style={{ width: 270 }}>
+          <div className="flex flex-col gap-px flex-shrink-0" style={{ width: 310 }}>
             {/* 알림 이력 헤더 */}
             <div className="flex-1 overflow-hidden flex flex-col" style={{ background: t.colors.bgPanel }}>
               <div className="flex items-center justify-between px-2 py-1.5 flex-shrink-0"
                    style={{ borderBottom: `1px solid ${t.colors.border}` }}>
                 <div className="flex items-center gap-1.5">
-                  <span style={t.sectionHeader}>감지 이력</span>
+                  <span style={t.sectionHeader}>에러 화면 기록</span>
                   {unacknowledgedCount > 0 && (
                     <span style={{ ...t.badge('danger'), fontSize: 9, padding: '0 4px' }}>
                       {unacknowledgedCount}
@@ -843,17 +1104,22 @@ export default function LivePage() {
                 {filteredAlerts.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-8 gap-2" style={{ color: t.colors.textDim }}>
                     <Radio size={20} style={{ opacity: 0.2 }} />
-                    <p style={{ fontSize: 11, opacity: 0.4 }}>
-                      {severityFilter === 'all' ? '감지된 이벤트 없음' : `"${severityLabel(severityFilter as AlertSeverity)}" 없음`}
+                    <p style={{ fontSize: 11, opacity: 0.5, fontWeight: 600 }}>
+                      {severityFilter === 'all' ? '이상 없음 — 정상 작동 중' : `"${severityLabel(severityFilter as AlertSeverity)}" 없음`}
                     </p>
+                    {severityFilter === 'all' && (
+                      <p style={{ fontSize: 10, opacity: 0.35, textAlign: 'center', lineHeight: 1.5 }}>
+                        Target 화면이 감지되면<br/>여기에 기록됩니다
+                      </p>
+                    )}
                   </div>
                 ) : (
                   filteredAlerts.map((a, i) => (
                     <AlertCard
-                      key={`${a.timestamp}_${i}`}
+                      key={`${a.camera_id}_${a.timestamp}_${i}`}
                       alert={a}
                       compact
-                      onDismiss={() => dismissAlert(a.timestamp)}
+                      onDismiss={() => dismissAlert(a.camera_id, a.timestamp)}
                       t={t}
                     />
                   ))
@@ -862,7 +1128,7 @@ export default function LivePage() {
             </div>
 
             {/* 메트릭 */}
-            <div className="flex-shrink-0 overflow-y-auto" style={{ background: t.colors.bgPanel, maxHeight: '45%' }}>
+            <div className="overflow-y-auto" style={{ background: t.colors.bgPanel, maxHeight: '40%' }}>
               <MetricsPanel metrics={metrics} />
             </div>
           </div>

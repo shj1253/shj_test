@@ -2,13 +2,22 @@ import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   Camera, FlaskConical, BarChart3, Tags, Activity, Settings2,
-  ChevronDown, Sun, Moon, Monitor,
+  ChevronDown, Sun, Moon, Monitor, HelpCircle,
 } from 'lucide-react'
 import { useThemeStore, THEME_LABELS, type ThemeId } from '../../store/themeStore'
+import ManualModal from '../ManualModal'
 
 /* ─── Navigation structure: 3 workflow groups ─── */
 
 const WORKFLOW_GROUPS = [
+  {
+    id: 'realtime',
+    label: '실시간',
+    items: [
+      { to: '/', label: '실시간 검출', icon: Camera },
+      { to: '/metrics', label: '성능 지표', icon: BarChart3 },
+    ],
+  },
   {
     id: 'prepare',
     label: '사전학습',
@@ -16,14 +25,6 @@ const WORKFLOW_GROUPS = [
       { to: '/training', label: '학습 설정', icon: Settings2 },
       { to: '/test', label: '테스트 추론', icon: FlaskConical },
       { to: '/compare', label: '모델 비교', icon: Activity },
-    ],
-  },
-  {
-    id: 'realtime',
-    label: '실시간',
-    items: [
-      { to: '/', label: '실시간 검출', icon: Camera },
-      { to: '/metrics', label: '성능 지표', icon: BarChart3 },
     ],
   },
   {
@@ -50,6 +51,7 @@ export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [showThemePicker, setShowThemePicker] = useState(false)
+  const [showManual, setShowManual] = useState(false)
 
   const activeGroup = WORKFLOW_GROUPS.find(g =>
     g.items.some(item =>
@@ -94,6 +96,19 @@ export default function Layout({ children }: LayoutProps) {
               </button>
             )
           })}
+        </div>
+
+        {/* Manual / Help */}
+        <div className="flex items-center px-2">
+          <button
+            onClick={() => setShowManual(true)}
+            className="p-1.5 rounded transition-colors flex items-center gap-1"
+            style={{ color: colors.textMuted }}
+            title="운용 설명서"
+          >
+            <HelpCircle size={14} />
+            <span style={{ fontSize: 11 }}>도움말</span>
+          </button>
         </div>
 
         {/* Theme picker */}
@@ -213,6 +228,9 @@ export default function Layout({ children }: LayoutProps) {
           {children}
         </div>
       </div>
+
+      {/* ─── Manual Modal ─── */}
+      {showManual && <ManualModal onClose={() => setShowManual(false)} />}
 
       {/* ─── Status bar ─── */}
       <div className="shrink-0 flex items-center justify-between px-3"

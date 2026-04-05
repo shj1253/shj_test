@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   RotateCcw, CheckCircle2, RefreshCw, Zap, SkipForward,
   Keyboard, ChevronDown, ChevronUp, X, History, AlertCircle,
-  Settings2
+  Settings2, BookOpen, AlertTriangle
 } from 'lucide-react'
 import { api } from '../api/httpClient'
 import { useALStore, useNotifStore, pushApiError, type LabelAction } from '../store'
@@ -100,10 +100,32 @@ function SampleCard({ sample, numTargets, onLabel, onSkip, isLoading, t }: {
     ? sample.classify_probs.indexOf(Math.max(...sample.classify_probs))
     : -1
 
+  const [imageUrl, setImageUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api.getSampleImage(sample.sample_id)
+      .then(res => { if (!cancelled) setImageUrl(res.data.image) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [sample.sample_id])
+
   return (
     <div className="rounded overflow-hidden flex flex-col"
          style={{ background: t.colors.bgPanel, border: `1px solid ${t.colors.border}`,
                   opacity: isLoading ? 0.6 : 1, transition: 'opacity 0.15s' }}>
+
+      {/* 프레임 이미지 */}
+      {imageUrl ? (
+        <img src={imageUrl} alt="sample frame"
+             style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover', display: 'block' }} />
+      ) : (
+        <div style={{ width: '100%', aspectRatio: '16/9', background: t.colors.bgInput,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: 9, color: t.colors.textDim }}>이미지 로딩 중...</span>
+        </div>
+      )}
+
       {/* 메타 정보 */}
       <div className="p-2" style={{ borderBottom: `1px solid ${t.colors.border}` }}>
         <div className="flex items-center justify-between mb-1">
@@ -155,7 +177,9 @@ function SampleCard({ sample, numTargets, onLabel, onSkip, isLoading, t }: {
 
       {/* 레이블 버튼 */}
       <div className="p-2">
-        <div style={{ fontSize: 10, color: t.colors.textDim, marginBottom: 3 }}>레이블 선택</div>
+        <div style={{ fontSize: 10, color: t.colors.textDim, marginBottom: 3 }}>
+          이 화면의 Target 종류를 선택하세요
+        </div>
         <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(numTargets, 4)}, 1fr)` }}>
           {Array.from({ length: numTargets }, (_, i) => (
             <button
@@ -165,8 +189,8 @@ function SampleCard({ sample, numTargets, onLabel, onSkip, isLoading, t }: {
               title={`T${i + 1} 레이블 지정 (단축키: ${i < 9 ? i + 1 : '-'})`}
               className="rounded text-white transition-all active:scale-95 disabled:cursor-not-allowed"
               style={{
-                padding: '4px 0',
-                fontSize: 10,
+                padding: '6px 0',
+                fontSize: 11,
                 fontWeight: 700,
                 background: TARGET_HUES[i % TARGET_HUES.length],
               }}>
@@ -174,6 +198,11 @@ function SampleCard({ sample, numTargets, onLabel, onSkip, isLoading, t }: {
             </button>
           ))}
         </div>
+        {isLoading && (
+          <p style={{ fontSize: 9, color: t.colors.textDim, marginTop: 4, textAlign: 'center' }}>
+            저장 중...
+          </p>
+        )}
       </div>
     </div>
   )
@@ -199,6 +228,12 @@ export default function LabelReviewPage() {
 
   // 키보드 단축키 패널
   const [showShortcuts, setShowShortcuts] = useState(false)
+
+  // T 기준 안내 패널
+  const [showTargetGuide, setShowTargetGuide] = useState(true)
+
+  // 레이블 완료 피드백 (sampleId → 완료 상태)
+  const [doneIds, setDoneIds] = useState<Set<string>>(new Set())
 
   // Undo 이력 패널
   const { labelHistory } = useALStore()
@@ -246,6 +281,8 @@ export default function LabelReviewPage() {
     try {
       setItemLoading(sampleId, true)
       const res = await api.submitLabel(sampleId, label)
+      // 낙관적 업데이트: 서버 응답 직후 로컬 큐에서 즉시 제거
+      setQueue(queue.filter(s => s.sample_id !== sampleId))
       pushLabelAction({
         sample_id: sampleId,
         label,
@@ -261,23 +298,24 @@ export default function LabelReviewPage() {
     } finally {
       setItemLoading(sampleId, false)
     }
-  }, [fetchQueue, pushLabelAction, addToast, pushNotif])
+  }, [fetchQueue, pushLabelAction, addToast, pushNotif, queue, setQueue])
 
   const handleSkip = useCallback(async (sampleId: string) => {
     try {
       setItemLoading(sampleId, true)
       await api.skipSample(sampleId)
       deferSample(sampleId)
+      setQueue(queue.filter(s => s.sample_id !== sampleId))
       addToast('샘플 건너뜀', 'info')
-      await fetchQueue()
+      fetchQueue()  // 비동기 백그라운드 동기화 (await 불필요)
     } catch (err) {
-      // 백엔드 실패 시 클라이언트 측 스킵으로 fallback
       deferSample(sampleId)
+      setQueue(queue.filter(s => s.sample_id !== sampleId))
       addToast('건너뜀 (로컬)', 'info')
     } finally {
       setItemLoading(sampleId, false)
     }
-  }, [fetchQueue, deferSample, addToast])
+  }, [fetchQueue, deferSample, addToast, queue, setQueue])
 
   const handleUndo = useCallback(async () => {
     const action = undoLast()
@@ -318,6 +356,9 @@ export default function LabelReviewPage() {
     const lr = parseFloat(trainLr)
     if (isNaN(lr) || lr <= 0) {
       addToast('학습률이 올바르지 않습니다 (예: 0.0001)', 'error')
+      return
+    }
+    if (!window.confirm(`레이블된 샘플 ${stats.labeled_count}개로 모델을 재학습합니다.\n재학습은 몇 분 이상 소요될 수 있습니다. 계속하시겠습니까?`)) {
       return
     }
     setTrainLoading(true)
@@ -578,15 +619,11 @@ export default function LabelReviewPage() {
             <>
               {/* 첫 번째 샘플 강조 */}
               {visibleQueue.length > 0 && (
-                <div className="mb-2 flex items-center gap-2">
-                  <span style={{ fontSize: 10, color: t.colors.textDim }}>
-                    ↑ 현재 포커스 — 숫자키로 빠른 레이블
+                <div className="mb-2 flex items-center gap-2 rounded px-2 py-1.5"
+                     style={{ background: t.colors.accent + '12', border: `1px solid ${t.colors.accent}25` }}>
+                  <span style={{ fontSize: 11, color: t.colors.text }}>
+                    파란 테두리 이미지부터 버튼을 클릭해서 종류를 선택하세요
                   </span>
-                  <kbd style={{
-                    fontSize: 9, fontFamily: 'monospace', fontWeight: 700,
-                    background: t.colors.bgInput, border: `1px solid ${t.colors.border}`,
-                    borderRadius: 3, padding: '1px 5px', color: t.colors.accent,
-                  }}>1~{numTargets}</kbd>
                 </div>
               )}
               <div className="grid grid-cols-3 gap-2">
