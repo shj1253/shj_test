@@ -16,11 +16,19 @@ RUN apt-get update && apt-get install -y \
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY backend/ ./backend/
 COPY pyproject.toml .
+
+# 모델 가중치 빌드 시 캐시 (런타임 다운로드 버퍼 ~200MB 제거 → Railway 512MB 한도 내 유지)
+RUN python -c "\
+import torchvision.models as m; \
+m.resnet18(weights=m.ResNet18_Weights.IMAGENET1K_V1); \
+m.resnet50(weights=m.ResNet50_Weights.IMAGENET1K_V2); \
+print('Model weights cached')"
 
 # Create required directories
 RUN mkdir -p artifacts/data/raw artifacts/data/labeled artifacts/data/al_queue \
