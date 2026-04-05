@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File as FastAPIFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+
+_TEST_VIDEO_DIR = Path("artifacts/test_videos")
 
 from backend.logging_config import get_logger
 
@@ -85,6 +89,31 @@ async def start_file_source(camera_id: str, req: FileSourceRequest):
             frame_interval_ms=req.frame_interval_ms,
         )
         return {"status": "started", "camera_id": camera_id, "mode": "file", "path": req.path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{camera_id}/upload-and-start")
+async def upload_and_start(
+    camera_id: str,
+    file: UploadFile = FastAPIFile(...),
+    loop: bool = True,
+):
+    """테스트용 영상/이미지 업로드 후 즉시 스트림 시작"""
+    _TEST_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(file.filename or "upload").name
+    dest = _TEST_VIDEO_DIR / safe_name
+    try:
+        with dest.open("wb") as f:
+            shutil.copyfileobj(file.file, f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"파일 저장 실패: {e}")
+
+    from backend.main import get_or_create_stream_manager
+    mgr = await get_or_create_stream_manager(camera_id)
+    try:
+        await mgr.start_file(path=str(dest), loop=loop, frame_interval_ms=33)
+        return {"status": "started", "camera_id": camera_id, "mode": "file", "path": str(dest)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

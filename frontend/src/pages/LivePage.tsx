@@ -356,7 +356,8 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   const [wsReconnectIn, setWsReconnectIn] = useState<number | null>(null)
   const [startLoading, setStartLoading] = useState(false)
   const [showFileInput, setShowFileInput] = useState(false)
-  const [filePath, setFilePath] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const filePickRef = useRef<HTMLInputElement>(null)
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const feedUrl = `${BASE_URL}/camera/${cameraId}/feed`
 
@@ -412,22 +413,26 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
     }
   }
 
-  const handleStartFile = async () => {
-    if (!filePath.trim() || startLoading) return
-    setStartLoading(true)
+  const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    setError(null)
     try {
-      setError(null)
-      await api.startFileById(cameraId, filePath.trim(), true)
+      const form = new FormData()
+      form.append('file', file)
+      form.append('loop', 'true')
+      await api.uploadAndStartFile(cameraId, form)
       setIsStreaming(true)
       setShowFileInput(false)
     } catch (err: unknown) {
       const anyErr = err as any
-      const msg = anyErr?.response?.data?.error ?? (err instanceof Error ? err.message : '파일 시작 실패')
-      const hint = anyErr?.response?.data?.hint
-      setError({ msg, hint })
+      const msg = anyErr?.response?.data?.detail ?? (err instanceof Error ? err.message : '파일 시작 실패')
+      setError({ msg })
       pushApiError(pushNotif, err, `파일 소스 시작 실패`)
     } finally {
-      setStartLoading(false)
+      setUploading(false)
+      if (filePickRef.current) filePickRef.current.value = ''
     }
   }
 
@@ -513,21 +518,25 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
         </div>
       </div>
 
-      {/* 파일 소스 입력 */}
+      {/* 파일 소스 선택 */}
       {showFileInput && (
-        <div className="flex gap-1 px-2 py-1 flex-shrink-0"
+        <div className="flex items-center gap-1.5 px-2 py-1.5 flex-shrink-0"
              style={{ background: t.colors.bgInput, borderBottom: `1px solid ${t.colors.border}` }}>
           <input
-            value={filePath}
-            onChange={e => setFilePath(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleStartFile()}
-            placeholder="파일 경로 (mp4, avi, jpg 등)"
-            style={{ ...t.input, flex: 1, fontSize: 10 }}
+            ref={filePickRef}
+            type="file"
+            accept="video/mp4,video/avi,video/quicktime,video/x-matroska,image/jpeg,image/png"
+            style={{ display: 'none' }}
+            onChange={handleFilePicked}
           />
-          <button onClick={handleStartFile} disabled={startLoading}
-                  style={{ ...t.btnPrimary, padding: '1px 6px', fontSize: 10, opacity: startLoading ? 0.6 : 1 }}>
-            {startLoading ? '시작 중...' : '재생'}
+          <button
+            onClick={() => filePickRef.current?.click()}
+            disabled={uploading}
+            style={{ ...t.btnPrimary, padding: '2px 8px', fontSize: 10, opacity: uploading ? 0.6 : 1 }}
+          >
+            <FileVideo size={10} /> {uploading ? '업로드 중...' : '파일 선택 (mp4 / avi / jpg)'}
           </button>
+          <span style={{ fontSize: 10, color: t.colors.textDim }}>선택 즉시 재생됩니다</span>
         </div>
       )}
 

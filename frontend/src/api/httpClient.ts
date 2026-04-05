@@ -54,6 +54,10 @@ export const api = {
     http.post(`/camera/${cameraId}/stop`),
   startFileById: (cameraId: string, path: string, loop = false) =>
     http.post(`/camera/${cameraId}/file`, { path, loop }),
+  uploadAndStartFile: (cameraId: string, form: FormData) =>
+    http.post(`/camera/${cameraId}/upload-and-start`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
   cameraStatusById: (cameraId: string) =>
     http.get(`/camera/${cameraId}/status`),
   removeCameraById: (cameraId: string) =>
