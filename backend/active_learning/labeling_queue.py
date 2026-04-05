@@ -206,6 +206,24 @@ class LabelingQueue:
         )
         return sample
 
+    def remove(self, sample_id: str) -> None:
+        """
+        샘플을 큐에서 완전히 제거 (스킵 — 레이블 없이 폐기)
+
+        Args:
+            sample_id: 제거할 샘플 ID
+        """
+        if sample_id in self._unlabeled:
+            del self._unlabeled[sample_id]
+            logger.info("Sample skipped/removed", sample_id=sample_id[:8])
+            return
+        if sample_id in self._labeled:
+            raise LabelingError(
+                f"이미 레이블된 샘플은 스킵할 수 없습니다: {sample_id}",
+                detail="undo_label을 먼저 호출하세요.",
+            )
+        raise SampleNotFoundError(f"샘플을 찾을 수 없습니다: {sample_id}")
+
     # ── 상태 ─────────────────────────────────────────────────────────────
 
     @property

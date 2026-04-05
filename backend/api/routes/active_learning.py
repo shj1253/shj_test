@@ -15,7 +15,7 @@ router = APIRouter(prefix="/al", tags=["active_learning"])
 
 class LabelRequest(BaseModel):
     sample_id: str
-    label: int = Field(..., ge=0, le=3, description="0=T1, 1=T2, 2=T3, 3=T4")
+    label: int = Field(..., ge=0, description="0=T1, 1=T2, ... (num_targets-1)")
 
 
 class TrainRequest(BaseModel):
@@ -55,16 +55,24 @@ async def get_queue():
 async def submit_label(req: LabelRequest):
     """샘플 레이블 제출"""
     from backend.main import get_al_engine
+    from backend.config import settings
     engine = get_al_engine()
     if engine is None:
-        raise HTTPException(status_code=503, detail="AL engine not initialized")
+        raise HTTPException(status_code=503, detail="AL 엔진이 초기화되지 않았습니다. 서버를 재시작하세요.")
+
+    if req.label >= settings.num_targets:
+        raise HTTPException(
+            status_code=422,
+            detail=f"레이블 값 {req.label}이 범위를 초과합니다. 유효 범위: 0~{settings.num_targets - 1} (T1~T{settings.num_targets})",
+        )
 
     try:
         sample = engine.queue.label(req.sample_id, req.label)
         return {
             "status": "labeled",
             "sample_id": req.sample_id,
-            "label": f"T{req.label + 1}",
+            "label": req.label,
+            "label_name": f"T{req.label + 1}",
             "labeled_at": sample.labeled_at.isoformat(),
         }
     except Exception as e:
@@ -105,6 +113,21 @@ async def undo_last_label():
             "sample_id": sample.sample_id,
             "returned_to_queue": True,
         }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/queue/{sample_id}")
+async def skip_sample(sample_id: str):
+    """샘플을 큐에서 제거 (스킵 — 레이블 없이 폐기)"""
+    from backend.main import get_al_engine
+    engine = get_al_engine()
+    if engine is None:
+        raise HTTPException(status_code=503, detail="AL 엔진이 초기화되지 않았습니다.")
+
+    try:
+        engine.queue.remove(sample_id)
+        return {"status": "skipped", "sample_id": sample_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -8,10 +8,11 @@ from __future__ import annotations
 class CannonBaseError(Exception):
     """모든 커스텀 예외의 루트"""
 
-    def __init__(self, message: str, *, detail: str | None = None) -> None:
+    def __init__(self, message: str, *, detail: str | None = None, hint: str | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.detail = detail
+        self.hint = hint  # 사용자에게 보여줄 복구 힌트
 
     def __str__(self) -> str:
         if self.detail:
@@ -73,14 +74,32 @@ class CameraError(CannonBaseError):
 
 class CameraNotOpenedError(CameraError):
     """카메라 장치 열기 실패"""
+    def __init__(self, message: str = "카메라 장치를 열 수 없습니다", *, detail: str | None = None, hint: str | None = None):
+        super().__init__(
+            message,
+            detail=detail,
+            hint=hint or "장치 ID가 올바른지 확인하세요. USB 케이블 연결 상태를 점검하고, 다른 앱이 카메라를 점유 중인지 확인하세요.",
+        )
 
 
 class CameraReadError(CameraError):
     """프레임 읽기 실패"""
+    def __init__(self, message: str = "카메라에서 프레임을 읽을 수 없습니다", *, detail: str | None = None, hint: str | None = None):
+        super().__init__(
+            message,
+            detail=detail,
+            hint=hint or "카메라 연결을 확인하거나 스트림을 재시작하세요.",
+        )
 
 
 class FileSourceError(CameraError):
     """파일 소스 오류 (이미지/영상 파일)"""
+    def __init__(self, message: str = "파일 소스 오류", *, detail: str | None = None, hint: str | None = None):
+        super().__init__(
+            message,
+            detail=detail,
+            hint=hint or "파일 경로가 올바른지, 파일이 존재하는지 확인하세요. 지원 형식: mp4, avi, jpg, png",
+        )
 
 
 # ── Active Learning Errors ───────────────────────────────────────────────────
@@ -91,10 +110,22 @@ class ALError(CannonBaseError):
 
 class ALQueueFullError(ALError):
     """AL 큐 최대 용량 초과"""
+    def __init__(self, message: str = "AL 큐가 가득 찼습니다", *, detail: str | None = None, hint: str | None = None):
+        super().__init__(
+            message,
+            detail=detail,
+            hint=hint or "레이블 리뷰 페이지에서 쌓인 샘플을 레이블링하면 큐에 공간이 생깁니다.",
+        )
 
 
 class SampleNotFoundError(ALError):
     """샘플 ID 조회 실패"""
+    def __init__(self, message: str = "샘플을 찾을 수 없습니다", *, detail: str | None = None, hint: str | None = None):
+        super().__init__(
+            message,
+            detail=detail,
+            hint=hint or "이미 레이블링되었거나 만료된 샘플입니다. 큐를 새로고침하세요.",
+        )
 
 
 class LabelingError(ALError):

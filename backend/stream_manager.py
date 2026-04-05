@@ -60,6 +60,7 @@ class StreamManager:
         # 알림 디바운싱
         self._debounce_votes: dict[int, int] = {}  # target_id → 연속 프레임 수
         self._last_alert_target: int | None = None  # 마지막으로 알림 발송한 target_id
+        self._alert_occurrence: dict[int, int] = {}  # target_id → 총 감지 횟수
         self._pending_alert: dict | None = None     # 다음 브로드캐스트에 첨부할 알림
 
     # ── 시작 / 중지 ────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ class StreamManager:
         self._frame_count = 0
         self._error_count = 0
         self._debounce_votes.clear()
+        self._alert_occurrence.clear()
         self._last_alert_target = None
         self._pending_alert = None
         self._task = asyncio.create_task(
@@ -226,6 +228,7 @@ class StreamManager:
             if (self._debounce_votes[tid] >= DEBOUNCE_FRAMES
                     and tid != self._last_alert_target):
                 self._last_alert_target = tid
+                self._alert_occurrence[tid] = self._alert_occurrence.get(tid, 0) + 1
                 meta = get_meta(tid)
                 alert = {
                     "event": "alert",
@@ -235,7 +238,10 @@ class StreamManager:
                     "screen_desc": meta["screen_desc"],
                     "situation": meta["situation"],
                     "action": meta["action"],
+                    "action_steps": meta.get("action_steps", []),
+                    "urgency": meta.get("urgency", ""),
                     "severity": meta["severity"],
+                    "occurrence_count": self._alert_occurrence[tid],
                     "frame_count": self._frame_count,
                     "timestamp": datetime.now().isoformat(),
                 }

@@ -187,7 +187,11 @@ async def cannon_exception_handler(request, exc: CannonBaseError):
     logger.error("Domain error", error=exc.message, detail=exc.detail)
     return JSONResponse(
         status_code=400,
-        content={"error": exc.message, "detail": exc.detail},
+        content={
+            "error": exc.message,
+            "detail": exc.detail,
+            "hint": exc.hint,
+        },
     )
 
 
@@ -196,7 +200,11 @@ async def generic_exception_handler(request, exc: Exception):
     logger.error("Unhandled error", error=str(exc), exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "detail": str(exc)},
+        content={
+            "error": "서버 내부 오류가 발생했습니다",
+            "detail": str(exc),
+            "hint": "잠시 후 다시 시도하거나, 서버 로그를 확인하세요.",
+        },
     )
 
 

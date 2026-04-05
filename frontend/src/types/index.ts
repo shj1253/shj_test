@@ -159,9 +159,13 @@ export interface DetectionAlert {
   screen_desc: string
   situation: string
   action: string
+  action_steps: string[]
+  urgency: string
   severity: AlertSeverity
+  occurrence_count: number
   frame_count: number
   timestamp: string
+  acknowledged?: boolean
 }
 
 export interface TrainingConfigMeta {

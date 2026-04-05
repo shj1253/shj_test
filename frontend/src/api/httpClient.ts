@@ -95,6 +95,7 @@ export const api = {
     sampleId
       ? http.delete(`/al/label/${sampleId}`)
       : http.delete('/al/label'),
+  skipSample: (sampleId: string) => http.delete(`/al/queue/${sampleId}`),
   triggerTraining: (epochs = 10, lr = 1e-4) =>
     http.post('/al/train', { epochs, lr }),
   alStats: () => http.get('/al/stats'),
