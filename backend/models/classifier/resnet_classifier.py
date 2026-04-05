@@ -17,7 +17,7 @@ import torchvision.models as models
 import torchvision.transforms as T
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 
 from backend.exceptions import ModelLoadError, ModelNotLoadedError, ModelSaveError
 from backend.logging_config import get_logger
@@ -211,13 +211,21 @@ class ResNetClassifier(BaseClassifierModel):
 
         train_transform = self._build_train_transform()
 
-        # 텐서 변환
-        tensor_images = torch.stack([
-            train_transform(img) for img in images
-        ])
-        tensor_labels = torch.tensor(labels, dtype=torch.long)
+        # 메모리 효율 Dataset — 배치 단위로만 변환 (전체 텐서 사전 변환 금지)
+        # 기존 방식(torch.stack 전체)은 2000장 기준 ~1.2GB RAM 소모 → OOM
+        class _LazyDataset(torch.utils.data.Dataset):
+            def __init__(self, imgs: list, lbls: list, tfm: T.Compose) -> None:
+                self._imgs = imgs
+                self._lbls = lbls
+                self._tfm = tfm
 
-        dataset = TensorDataset(tensor_images, tensor_labels)
+            def __len__(self) -> int:
+                return len(self._imgs)
+
+            def __getitem__(self, idx: int):
+                return self._tfm(self._imgs[idx]), self._lbls[idx]
+
+        dataset = _LazyDataset(images, labels, train_transform)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
 
         if freeze_backbone:
