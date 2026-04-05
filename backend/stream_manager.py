@@ -94,6 +94,15 @@ class StreamManager:
         self._mode = "file"
         self._start_loop(frame_interval_ms=frame_interval_ms)
 
+    async def start_rtsp(self, url: str, frame_interval_ms: int = 33) -> None:
+        """RTSP / IP 카메라 URL (rtsp:// or http://) 스트림 시작"""
+        from backend.camera.camera_source import RtspSource
+        await self.stop()
+        self._source = RtspSource(url=url)
+        await self._source.open()
+        self._mode = "rtsp"
+        self._start_loop(frame_interval_ms=frame_interval_ms)
+
     def _start_loop(self, frame_interval_ms: int) -> None:
         self._running = True
         self._frame_count = 0

@@ -194,3 +194,36 @@ class FileSource(CameraSource):
             "is_video": self._is_video,
             "is_opened": self._opened,
         }
+
+
+class RtspSource(CameraSource):
+    """RTSP / IP 카메라 URL 소스"""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self._cap: cv2.VideoCapture | None = None
+
+    async def open(self) -> None:
+        self._cap = cv2.VideoCapture(self.url)
+        if not self._cap.isOpened():
+            raise FileSourceError(f"RTSP 연결 실패: {self.url}")
+        logger.info("RTSP source opened", url=self.url)
+
+    async def read_frame(self) -> np.ndarray | None:
+        if not self._cap or not self._cap.isOpened():
+            return None
+        ret, frame = self._cap.read()
+        if not ret:
+            return None
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    async def close(self) -> None:
+        if self._cap:
+            self._cap.release()
+            self._cap = None
+
+    def is_opened(self) -> bool:
+        return self._cap is not None and self._cap.isOpened()
+
+    def get_info(self) -> dict:
+        return {"type": "rtsp", "url": self.url, "is_opened": self.is_opened()}

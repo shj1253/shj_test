@@ -151,6 +151,34 @@ async def camera_feed(camera_id: str):
     )
 
 
+@router.get("/{camera_id}/snapshot")
+async def camera_snapshot(camera_id: str):
+    """현재 프레임 단일 JPEG 반환 (폴링용)"""
+    from fastapi.responses import Response
+    from backend.main import get_stream_manager
+    mgr = get_stream_manager(camera_id)
+    if not mgr or not mgr.last_jpeg:
+        raise HTTPException(status_code=503, detail="No frame available")
+    return Response(
+        content=mgr.last_jpeg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@router.post("/{camera_id}/rtsp")
+async def start_rtsp(camera_id: str, req: FileSourceRequest):
+    """RTSP / IP 카메라 URL로 스트림 시작"""
+    from backend.main import get_or_create_stream_manager
+    from backend.stream_manager import StreamManager
+    mgr = await get_or_create_stream_manager(camera_id)
+    try:
+        await mgr.start_rtsp(url=req.path)
+        return {"status": "started", "camera_id": camera_id, "mode": "rtsp", "url": req.path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/{camera_id}")
 async def remove_camera(camera_id: str):
     """카메라 제거 (StreamManager 종료)"""

@@ -359,8 +359,28 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   const [uploading, setUploading] = useState(false)
   const filePickRef = useRef<HTMLInputElement>(null)
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [feedKey, setFeedKey] = useState(Date.now())
-  const feedUrl = `${BASE_URL}/camera/${cameraId}/feed?t=${feedKey}`
+  const [rtspUrl, setRtspUrl] = useState('')
+  const [showRtsp, setShowRtsp] = useState(false)
+
+  // 스냅샷 폴링 — MJPEG img 대신 200ms마다 단일 JPEG fetch (브라우저 호환성 우수)
+  const [snapUrl, setSnapUrl] = useState<string | null>(null)
+  const snapBlobRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!isStreaming || !showFeed) { setSnapUrl(null); return }
+    const poll = async () => {
+      try {
+        const res = await fetch(`${BASE_URL}/camera/${cameraId}/snapshot?t=${Date.now()}`)
+        if (!res.ok) return
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        setSnapUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+        snapBlobRef.current = url
+      } catch { /* 스트림 아직 준비 중 */ }
+    }
+    poll()
+    const iv = setInterval(poll, 200)
+    return () => { clearInterval(iv); if (snapBlobRef.current) URL.revokeObjectURL(snapBlobRef.current) }
+  }, [isStreaming, showFeed, cameraId])
 
   // C-2 fix: 컴포넌트 언마운트 시 타이머 정리 → 언마운트 후 setState 오류 방지
   useEffect(() => () => {
@@ -391,7 +411,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   useWebSocket(`stream/${cameraId}`, handleMsg, (online, reconnectIn) => {
     setWsOnline(online)
     setWsReconnectIn(online ? null : (reconnectIn ?? null))
-    if (online) setFeedKey(Date.now())  // 재연결 시 MJPEG 스트림 강제 갱신
+    // 재연결 시 스냅샷 폴링이 자동으로 재시작됨 (isStreaming 의존)
   })
 
   const clearError = () => setError(null)
@@ -404,7 +424,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
       await api.startCameraById(cameraId, parseInt(cameraId) || 0)
       setIsStreaming(true)
       setShowFileInput(false)
-      setFeedKey(Date.now())
+
     } catch (err: unknown) {
       const anyErr = err as any
       const msg = anyErr?.response?.data?.error ?? (err instanceof Error ? err.message : '시작 실패')
@@ -428,7 +448,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
       await api.uploadAndStartFile(cameraId, form)
       setIsStreaming(true)
       setShowFileInput(false)
-      setFeedKey(Date.now())
+
     } catch (err: unknown) {
       const anyErr = err as any
       const msg = anyErr?.response?.data?.detail ?? (err instanceof Error ? err.message : '파일 시작 실패')
@@ -533,14 +553,57 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
             style={{ display: 'none' }}
             onChange={handleFilePicked}
           />
-          <button
-            onClick={() => filePickRef.current?.click()}
-            disabled={uploading}
-            style={{ ...t.btnPrimary, padding: '2px 8px', fontSize: 10, opacity: uploading ? 0.6 : 1 }}
-          >
-            <FileVideo size={10} /> {uploading ? '업로드 중...' : '파일 선택 (mp4 / avi / jpg)'}
-          </button>
-          <span style={{ fontSize: 10, color: t.colors.textDim }}>선택 즉시 재생됩니다</span>
+          <div className="flex flex-col gap-1.5 w-full">
+            {/* 파일 업로드 */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => filePickRef.current?.click()}
+                disabled={uploading}
+                style={{ ...t.btnPrimary, padding: '2px 8px', fontSize: 10, opacity: uploading ? 0.6 : 1 }}
+              >
+                <FileVideo size={10} /> {uploading ? '업로드 중...' : '영상 파일 (mp4 / avi)'}
+              </button>
+              <span style={{ fontSize: 10, color: t.colors.textDim }}>선택 즉시 재생</span>
+            </div>
+            {/* RTSP / IP 카메라 */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setShowRtsp(v => !v)}
+                style={{ ...t.btnSecondary, padding: '2px 8px', fontSize: 10 }}
+              >
+                📱 핸드폰 카메라 (IP/RTSP)
+              </button>
+            </div>
+            {showRtsp && (
+              <div className="flex gap-1">
+                <input
+                  value={rtspUrl}
+                  onChange={e => setRtspUrl(e.target.value)}
+                  placeholder="rtsp://192.168.x.x:포트  또는  http://192.168.x.x:포트"
+                  style={{ ...t.input, flex: 1, fontSize: 10 }}
+                />
+                <button
+                  onClick={async () => {
+                    if (!rtspUrl.trim()) return
+                    setStartLoading(true)
+                    try {
+                      await api.startRtsp(cameraId, rtspUrl.trim())
+                      setIsStreaming(true)
+                      setShowFileInput(false)
+                      setShowRtsp(false)
+                    } catch (err: unknown) {
+                      const msg = (err as any)?.response?.data?.detail ?? '연결 실패'
+                      setError({ msg, hint: 'IP 카메라 앱의 주소를 확인하세요' })
+                    } finally { setStartLoading(false) }
+                  }}
+                  disabled={startLoading || !rtspUrl.trim()}
+                  style={{ ...t.btnPrimary, padding: '2px 8px', fontSize: 10 }}
+                >
+                  연결
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -568,8 +631,12 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
       {/* 피드 영역 */}
       <div className="flex-1 relative overflow-hidden" style={{ background: '#000', minHeight: 100 }}>
         {isStreaming && showFeed ? (
-          <img src={feedUrl} alt={`cam ${cameraId}`}
-               style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+          snapUrl
+            ? <img src={snapUrl} alt={`cam ${cameraId}`}
+                   style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+            : <div className="flex items-center justify-center h-full" style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>
+                프레임 대기 중...
+              </div>
         ) : isStreaming ? (
           <div className="flex items-center justify-center h-full" style={{ color: t.colors.textDim }}>
             <div className="text-center space-y-1">
