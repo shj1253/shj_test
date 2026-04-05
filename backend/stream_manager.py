@@ -94,6 +94,34 @@ class StreamManager:
         self._mode = "file"
         self._start_loop(frame_interval_ms=frame_interval_ms)
 
+    def _sync_open_file(self, path: str, loop: bool) -> None:
+        """블로킹 파일 소스 초기화 (asyncio.to_thread에서 호출)"""
+        import asyncio as _asyncio
+        src = FileSource(path=Path(path), loop=loop, frame_interval_ms=33)
+        # FileSource.open()은 async지만 내부는 동기 cv2 호출 — 직접 실행
+        p = Path(path)
+        suffix = p.suffix.lower()
+        if suffix in {".mp4", ".avi", ".mov", ".mkv", ".wmv"}:
+            import cv2 as _cv2
+            cap = _cv2.VideoCapture(str(p))
+            if not cap.isOpened():
+                raise RuntimeError(f"영상 열기 실패: {path}")
+            src._cap = cap
+            src._is_video = True
+        elif suffix in {".jpg", ".jpeg", ".png", ".bmp"}:
+            import cv2 as _cv2
+            img = _cv2.imread(str(p))
+            if img is None:
+                raise RuntimeError(f"이미지 열기 실패: {path}")
+            import numpy as _np
+            src._images = [_cv2.cvtColor(img, _cv2.COLOR_BGR2RGB)]
+            src._is_video = False
+        else:
+            raise RuntimeError(f"지원하지 않는 파일 형식: {suffix}")
+        src._opened = True
+        self._source = src
+        self._mode = "file"
+
     async def start_rtsp(self, url: str, frame_interval_ms: int = 33) -> None:
         """RTSP / IP 카메라 URL (rtsp:// or http://) 스트림 시작"""
         from backend.camera.camera_source import RtspSource

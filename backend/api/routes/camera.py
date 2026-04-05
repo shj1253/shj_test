@@ -103,16 +103,21 @@ async def upload_and_start(
     _TEST_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
     safe_name = Path(file.filename or "upload").name
     dest = _TEST_VIDEO_DIR / safe_name
+    # 청크 단위 저장 (대용량 파일도 메모리 초과 없이 처리)
     try:
-        data = await file.read()  # 비동기 읽기
-        await asyncio.to_thread(dest.write_bytes, data)  # 블로킹 쓰기를 스레드로
+        def _save():
+            with dest.open("wb") as f:
+                shutil.copyfileobj(file.file, f)
+        await asyncio.to_thread(_save)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"파일 저장 실패: {e}")
 
     from backend.main import get_or_create_stream_manager
     mgr = await get_or_create_stream_manager(camera_id)
     try:
-        await mgr.start_file(path=str(dest), loop=loop, frame_interval_ms=33)
+        # cv2.VideoCapture 초기화도 블로킹 → 스레드로
+        await asyncio.to_thread(mgr._sync_open_file, str(dest), loop)
+        mgr._start_loop(frame_interval_ms=33)
         return {"status": "started", "camera_id": camera_id, "mode": "file", "path": str(dest)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
