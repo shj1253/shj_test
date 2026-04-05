@@ -359,7 +359,8 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   const [uploading, setUploading] = useState(false)
   const filePickRef = useRef<HTMLInputElement>(null)
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const feedUrl = `${BASE_URL}/camera/${cameraId}/feed`
+  const [feedKey, setFeedKey] = useState(Date.now())
+  const feedUrl = `${BASE_URL}/camera/${cameraId}/feed?t=${feedKey}`
 
   // C-2 fix: 컴포넌트 언마운트 시 타이머 정리 → 언마운트 후 setState 오류 방지
   useEffect(() => () => {
@@ -390,6 +391,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   useWebSocket(`stream/${cameraId}`, handleMsg, (online, reconnectIn) => {
     setWsOnline(online)
     setWsReconnectIn(online ? null : (reconnectIn ?? null))
+    if (online) setFeedKey(Date.now())  // 재연결 시 MJPEG 스트림 강제 갱신
   })
 
   const clearError = () => setError(null)
@@ -402,6 +404,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
       await api.startCameraById(cameraId, parseInt(cameraId) || 0)
       setIsStreaming(true)
       setShowFileInput(false)
+      setFeedKey(Date.now())
     } catch (err: unknown) {
       const anyErr = err as any
       const msg = anyErr?.response?.data?.error ?? (err instanceof Error ? err.message : '시작 실패')
@@ -425,6 +428,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
       await api.uploadAndStartFile(cameraId, form)
       setIsStreaming(true)
       setShowFileInput(false)
+      setFeedKey(Date.now())
     } catch (err: unknown) {
       const anyErr = err as any
       const msg = anyErr?.response?.data?.detail ?? (err instanceof Error ? err.message : '파일 시작 실패')
