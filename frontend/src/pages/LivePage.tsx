@@ -351,7 +351,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   const [activeAlert, setActiveAlert] = useState<DetectionAlert | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [showFeed, setShowFeed] = useState(true)
-  const [error, setError] = useState<{ msg: string; hint?: string } | null>(null)
+  const [error, setError] = useState<{ msg: string; hint?: string; source?: string } | null>(null)
   const [wsOnline, setWsOnline] = useState(false)
   const [wsReconnectIn, setWsReconnectIn] = useState<number | null>(null)
   const [startLoading, setStartLoading] = useState(false)
@@ -454,7 +454,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
     } catch (err: unknown) {
       const anyErr = err as any
       const msg = anyErr?.response?.data?.detail ?? (err instanceof Error ? err.message : '파일 시작 실패')
-      setError({ msg })
+      setError({ msg, source: 'file' })
       pushApiError(pushNotif, err, `파일 소스 시작 실패`)
     } finally {
       setUploading(false)
@@ -624,9 +624,19 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
               💡 {error.hint}
             </p>
           )}
-          <button onClick={handleStart} disabled={startLoading}
-                  style={{ ...t.btnSecondary, fontSize: 10, padding: '2px 8px', marginLeft: 18, opacity: startLoading ? 0.6 : 1 }}>
-            <RefreshCw size={10} /> {startLoading ? '시작 중...' : '다시 시도'}
+          <button
+            onClick={() => {
+              clearError()
+              if (error.source === 'file') {
+                filePickRef.current?.click()
+              } else {
+                handleStart()
+              }
+            }}
+            disabled={startLoading}
+            style={{ ...t.btnSecondary, fontSize: 10, padding: '2px 8px', marginLeft: 18, opacity: startLoading ? 0.6 : 1 }}
+          >
+            <RefreshCw size={10} /> {error.source === 'file' ? '파일 다시 선택' : (startLoading ? '시작 중...' : '다시 시도')}
           </button>
         </div>
       )}
