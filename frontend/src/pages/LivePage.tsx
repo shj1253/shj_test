@@ -11,7 +11,7 @@ import { useTheme } from '../hooks/useTheme'
 import MetricsPanel from '../components/MetricsPanel/MetricsPanel'
 import type { DetectionAlert, InferenceResult, MetricsSnapshot, AlertSeverity } from '../types'
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? ''
+const BASE_URL = import.meta.env.VITE_API_URL ?? '/api'
 const MAX_ALERTS = 50
 
 // T1~T4 한글 공식 이름 (비전문가 현장 작업자용)
