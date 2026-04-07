@@ -187,6 +187,7 @@ class FileSource(CameraSource):
         self._img_idx: int = 0
         self._is_video: bool = False
         self._opened: bool = False
+        self._video_fps: float = 30.0
         self._queue: asyncio.Queue | None = None
         self._stop_evt = threading.Event()
         self._thread: threading.Thread | None = None
@@ -219,13 +220,14 @@ class FileSource(CameraSource):
                         "지원하지 않는 코덱입니다. H.264 mp4 또는 XVID avi를 사용하세요."
                     )
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                return cap
-            self._cap = await asyncio.to_thread(_open_video)
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                return cap, fps if fps > 0 else 30.0
+            self._cap, self._video_fps = await asyncio.to_thread(_open_video)
             self._is_video = True
 
             loop = asyncio.get_event_loop()
-            # 파일: 버퍼 큐 — 모든 프레임 순서대로 처리
-            self._queue = asyncio.Queue(maxsize=_FILE_QUEUE_MAXSIZE)
+            # 실시간 속도 재생: 큐 1개, 처리 못 따라가면 프레임 드롭
+            self._queue = asyncio.Queue(maxsize=_LIVE_QUEUE_MAXSIZE)
             self._stop_evt.clear()
             self._thread = _start_reader(
                 self._reader_loop, loop, f"file_reader_{self.path.name}"
@@ -258,25 +260,42 @@ class FileSource(CameraSource):
         )
 
     def _reader_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """전용 reader 스레드: cap.read() → queue.put()"""
+        """전용 reader 스레드: 네이티브 FPS로 읽고, 처리 못 따라가면 프레임 드롭"""
+        import time
         assert self._cap and self._queue
+        spf = 1.0 / self._video_fps  # seconds per frame
+
+        async def _replace(frame: np.ndarray) -> None:
+            """큐를 비우고 최신 프레임만 유지 — 처리 지연 시 프레임 드롭"""
+            while not self._queue.empty():
+                try:
+                    self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            await self._queue.put(frame)
+
         while not self._stop_evt.is_set():
+            t0 = time.monotonic()
             ret, frame = self._cap.read()
             if not ret:
                 if self.loop:
                     self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
-                # 영상 끝 — None으로 종료 신호
                 asyncio.run_coroutine_threadsafe(self._queue.put(None), loop)
                 break
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            fut = asyncio.run_coroutine_threadsafe(self._queue.put(rgb), loop)
+            fut = asyncio.run_coroutine_threadsafe(_replace(rgb), loop)
             try:
-                fut.result(timeout=1.0)
+                fut.result(timeout=0.5)
             except concurrent.futures.TimeoutError:
                 continue
             except Exception:
                 break
+            # 네이티브 FPS에 맞춰 다음 프레임까지 대기
+            elapsed = time.monotonic() - t0
+            wait = spf - elapsed
+            if wait > 0:
+                time.sleep(wait)
 
     async def read_frame(self) -> np.ndarray | None:
         if not self._opened:
@@ -316,7 +335,7 @@ class FileSource(CameraSource):
             "type": "file",
             "path": str(self.path),
             "loop": self.loop,
-            "frame_interval_ms": self.frame_interval_ms,
+            "fps": self._video_fps,
             "is_video": self._is_video,
             "is_opened": self._opened,
             "queue_size": self._queue.qsize() if self._queue else 0,

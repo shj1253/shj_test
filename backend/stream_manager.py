@@ -216,11 +216,12 @@ class StreamManager:
                 # H-R6-3 fix: skip frame rate sleep after backoff to avoid stacking delays
                 continue
 
-            # 프레임 레이트 조절
-            elapsed = asyncio.get_event_loop().time() - loop_start
-            sleep_time = max(0.0, interval_s - elapsed)
-            if sleep_time > 0:
-                await asyncio.sleep(sleep_time)
+            # 프레임 레이트 조절 (카메라 모드만 — 파일은 리더 스레드가 FPS 제어)
+            if self._mode != "file":
+                elapsed = asyncio.get_event_loop().time() - loop_start
+                sleep_time = max(0.0, interval_s - elapsed)
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
 
     async def _process_alert(self, result) -> None:
         """
