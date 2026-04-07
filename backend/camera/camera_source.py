@@ -1,8 +1,16 @@
 """
 카메라 소스 추상 기반 클래스
+
+프레임 읽기 구조:
+  - 전용 reader 스레드가 백그라운드에서 cap.read() 루프 실행
+  - 읽은 프레임을 asyncio.Queue에 push
+  - read_frame()은 queue.get()으로 꺼내기만 함 → 이벤트 루프 블로킹 없음
 """
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -13,6 +21,9 @@ from backend.exceptions import CameraNotOpenedError, CameraReadError, FileSource
 from backend.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# 프레임 큐 최대 크기 (초과 시 reader 스레드가 소비 대기)
+_QUEUE_MAXSIZE = 8
 
 
 class CameraSource(ABC):
@@ -35,8 +46,31 @@ class CameraSource(ABC):
     def get_info(self) -> dict: ...
 
 
+# ── 공통 유틸 ──────────────────────────────────────────────────────────────
+
+def _drain_queue(q: asyncio.Queue) -> None:
+    """큐를 비워 reader 스레드의 put() 블로킹 해제"""
+    while True:
+        try:
+            q.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+
+
+def _start_reader(
+    target,
+    loop: asyncio.AbstractEventLoop,
+    name: str,
+) -> threading.Thread:
+    t = threading.Thread(target=target, args=(loop,), daemon=True, name=name)
+    t.start()
+    return t
+
+
+# ── OpenCVCamera ───────────────────────────────────────────────────────────
+
 class OpenCVCamera(CameraSource):
-    """실시간 카메라 (OpenCV)"""
+    """실시간 카메라 (OpenCV) — 전용 reader 스레드"""
 
     def __init__(
         self,
@@ -50,32 +84,57 @@ class OpenCVCamera(CameraSource):
         self.height = height
         self.fps = fps
         self._cap: cv2.VideoCapture | None = None
+        self._queue: asyncio.Queue | None = None
+        self._stop_evt = threading.Event()
+        self._thread: threading.Thread | None = None
 
     async def open(self) -> None:
-        import asyncio as _asyncio
         device_id, width, height, fps = self.device_id, self.width, self.height, self.fps
+
         def _open():
             cap = cv2.VideoCapture(device_id)
             if not cap.isOpened():
-                raise CameraNotOpenedError(f"Cannot open camera device {device_id}")
+                raise CameraNotOpenedError(f"카메라 {device_id}번 열기 실패")
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             cap.set(cv2.CAP_PROP_FPS, fps)
             return cap
-        self._cap = await _asyncio.to_thread(_open)
-        logger.info("Camera opened", device_id=self.device_id, fps=self.fps)
+
+        self._cap = await asyncio.to_thread(_open)
+        loop = asyncio.get_event_loop()
+        self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
+        self._stop_evt.clear()
+        self._thread = _start_reader(self._reader_loop, loop, f"cam_reader_{device_id}")
+        logger.info("Camera opened", device_id=device_id, fps=fps)
+
+    def _reader_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """전용 reader 스레드: cap.read() → queue.put()"""
+        assert self._cap and self._queue
+        while not self._stop_evt.is_set():
+            ret, frame = self._cap.read()
+            if not ret:
+                asyncio.run_coroutine_threadsafe(self._queue.put(None), loop)
+                break
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            fut = asyncio.run_coroutine_threadsafe(self._queue.put(rgb), loop)
+            try:
+                fut.result(timeout=1.0)
+            except concurrent.futures.TimeoutError:
+                continue
+            except Exception:
+                break
 
     async def read_frame(self) -> np.ndarray | None:
-        if not self._cap or not self._cap.isOpened():
+        if not self._queue:
             raise CameraNotOpenedError("Camera not opened")
-        import asyncio as _asyncio
-        cap = self._cap
-        ret, frame = await _asyncio.to_thread(cap.read)
-        if not ret:
-            raise CameraReadError("Failed to read frame from camera")
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return await self._queue.get()
 
     async def close(self) -> None:
+        self._stop_evt.set()
+        if self._queue:
+            _drain_queue(self._queue)
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
         if self._cap:
             self._cap.release()
             self._cap = None
@@ -95,8 +154,10 @@ class OpenCVCamera(CameraSource):
         }
 
 
+# ── FileSource ─────────────────────────────────────────────────────────────
+
 class FileSource(CameraSource):
-    """이미지/영상 파일 소스 (테스트 모드)"""
+    """영상/이미지 파일 소스 — 영상은 전용 reader 스레드, 이미지는 직접 반환"""
 
     def __init__(
         self,
@@ -113,38 +174,66 @@ class FileSource(CameraSource):
         self._img_idx: int = 0
         self._is_video: bool = False
         self._opened: bool = False
+        self._queue: asyncio.Queue | None = None
+        self._stop_evt = threading.Event()
+        self._thread: threading.Thread | None = None
 
     async def open(self) -> None:
         if not self.path.exists():
-            raise FileSourceError(f"File not found: {self.path}")
+            raise FileSourceError(f"파일 없음: {self.path}")
 
         suffix = self.path.suffix.lower()
+
         if suffix in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
-            # 단일 이미지
-            img = cv2.imread(str(self.path))
-            if img is None:
-                raise FileSourceError(f"Cannot read image: {self.path}")
-            self._images = [cv2.cvtColor(img, cv2.COLOR_BGR2RGB)]
+            def _load():
+                img = cv2.imread(str(self.path))
+                if img is None:
+                    raise FileSourceError(f"이미지 열기 실패: {self.path.name}")
+                return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            self._images = [await asyncio.to_thread(_load)]
             self._is_video = False
+
         elif suffix in {".mp4", ".avi", ".mov", ".mkv", ".wmv"}:
-            # 영상
-            self._cap = cv2.VideoCapture(str(self.path))
-            if not self._cap.isOpened():
-                raise FileSourceError(f"Cannot open video: {self.path}")
+            def _open_video():
+                cap = cv2.VideoCapture(str(self.path))
+                if not cap.isOpened():
+                    raise FileSourceError(f"영상 열기 실패: {self.path.name}")
+                ret, _ = cap.read()
+                if not ret:
+                    cap.release()
+                    raise FileSourceError(
+                        f"첫 프레임 읽기 실패: {self.path.name} — "
+                        "지원하지 않는 코덱입니다. H.264 mp4 또는 XVID avi를 사용하세요."
+                    )
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                return cap
+            self._cap = await asyncio.to_thread(_open_video)
             self._is_video = True
+
+            loop = asyncio.get_event_loop()
+            self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
+            self._stop_evt.clear()
+            self._thread = _start_reader(
+                self._reader_loop, loop, f"file_reader_{self.path.name}"
+            )
+
         elif self.path.is_dir():
-            # 디렉터리 내 이미지들
             exts = {".jpg", ".jpeg", ".png", ".bmp"}
-            files = sorted([f for f in self.path.iterdir() if f.suffix.lower() in exts])
+            files = sorted(f for f in self.path.iterdir() if f.suffix.lower() in exts)
             if not files:
-                raise FileSourceError(f"No images found in: {self.path}")
-            for f in files:
-                img = cv2.imread(str(f))
-                if img is not None:
-                    self._images.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                raise FileSourceError(f"이미지 없음: {self.path}")
+            def _load_dir():
+                imgs = []
+                for f in files:
+                    img = cv2.imread(str(f))
+                    if img is not None:
+                        imgs.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                return imgs
+            self._images = await asyncio.to_thread(_load_dir)
             self._is_video = False
+
         else:
-            raise FileSourceError(f"Unsupported file type: {suffix}")
+            raise FileSourceError(f"지원하지 않는 파일 형식: {suffix}")
 
         self._opened = True
         logger.info(
@@ -154,24 +243,35 @@ class FileSource(CameraSource):
             n_images=len(self._images) if not self._is_video else "video",
         )
 
+    def _reader_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """전용 reader 스레드: cap.read() → queue.put()"""
+        assert self._cap and self._queue
+        while not self._stop_evt.is_set():
+            ret, frame = self._cap.read()
+            if not ret:
+                if self.loop:
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue
+                # 영상 끝 — None으로 종료 신호
+                asyncio.run_coroutine_threadsafe(self._queue.put(None), loop)
+                break
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            fut = asyncio.run_coroutine_threadsafe(self._queue.put(rgb), loop)
+            try:
+                fut.result(timeout=1.0)
+            except concurrent.futures.TimeoutError:
+                continue
+            except Exception:
+                break
+
     async def read_frame(self) -> np.ndarray | None:
         if not self._opened:
             raise FileSourceError("FileSource not opened")
 
         if self._is_video:
-            assert self._cap is not None
-            import asyncio as _asyncio
-            cap = self._cap
-            ret, frame = await _asyncio.to_thread(cap.read)
-            if not ret:
-                if self.loop:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ret, frame = await _asyncio.to_thread(cap.read)
-                    if not ret:
-                        return None
-                else:
-                    return None
-            return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # 큐에서 다음 프레임 대기 — 이벤트 루프를 블로킹하지 않음
+            assert self._queue
+            return await self._queue.get()
         else:
             if self._img_idx >= len(self._images):
                 if self.loop:
@@ -183,6 +283,11 @@ class FileSource(CameraSource):
             return frame
 
     async def close(self) -> None:
+        self._stop_evt.set()
+        if self._queue:
+            _drain_queue(self._queue)
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
         if self._cap:
             self._cap.release()
             self._cap = None
@@ -200,31 +305,63 @@ class FileSource(CameraSource):
             "frame_interval_ms": self.frame_interval_ms,
             "is_video": self._is_video,
             "is_opened": self._opened,
+            "queue_size": self._queue.qsize() if self._queue else 0,
         }
 
 
+# ── RtspSource ─────────────────────────────────────────────────────────────
+
 class RtspSource(CameraSource):
-    """RTSP / IP 카메라 URL 소스"""
+    """RTSP / IP 카메라 URL 소스 — 전용 reader 스레드"""
 
     def __init__(self, url: str) -> None:
         self.url = url
         self._cap: cv2.VideoCapture | None = None
+        self._queue: asyncio.Queue | None = None
+        self._stop_evt = threading.Event()
+        self._thread: threading.Thread | None = None
 
     async def open(self) -> None:
-        self._cap = cv2.VideoCapture(self.url)
-        if not self._cap.isOpened():
-            raise FileSourceError(f"RTSP 연결 실패: {self.url}")
+        def _open():
+            cap = cv2.VideoCapture(self.url)
+            if not cap.isOpened():
+                raise FileSourceError(f"RTSP 연결 실패: {self.url}")
+            return cap
+
+        self._cap = await asyncio.to_thread(_open)
+        loop = asyncio.get_event_loop()
+        self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
+        self._stop_evt.clear()
+        self._thread = _start_reader(self._reader_loop, loop, "rtsp_reader")
         logger.info("RTSP source opened", url=self.url)
 
+    def _reader_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        assert self._cap and self._queue
+        while not self._stop_evt.is_set():
+            ret, frame = self._cap.read()
+            if not ret:
+                asyncio.run_coroutine_threadsafe(self._queue.put(None), loop)
+                break
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            fut = asyncio.run_coroutine_threadsafe(self._queue.put(rgb), loop)
+            try:
+                fut.result(timeout=1.0)
+            except concurrent.futures.TimeoutError:
+                continue
+            except Exception:
+                break
+
     async def read_frame(self) -> np.ndarray | None:
-        if not self._cap or not self._cap.isOpened():
+        if not self._queue:
             return None
-        ret, frame = self._cap.read()
-        if not ret:
-            return None
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return await self._queue.get()
 
     async def close(self) -> None:
+        self._stop_evt.set()
+        if self._queue:
+            _drain_queue(self._queue)
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
         if self._cap:
             self._cap.release()
             self._cap = None
@@ -233,4 +370,9 @@ class RtspSource(CameraSource):
         return self._cap is not None and self._cap.isOpened()
 
     def get_info(self) -> dict:
-        return {"type": "rtsp", "url": self.url, "is_opened": self.is_opened()}
+        return {
+            "type": "rtsp",
+            "url": self.url,
+            "is_opened": self.is_opened(),
+            "queue_size": self._queue.qsize() if self._queue else 0,
+        }
