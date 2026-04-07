@@ -52,20 +52,25 @@ class OpenCVCamera(CameraSource):
         self._cap: cv2.VideoCapture | None = None
 
     async def open(self) -> None:
-        self._cap = cv2.VideoCapture(self.device_id)
-        if not self._cap.isOpened():
-            raise CameraNotOpenedError(
-                f"Cannot open camera device {self.device_id}"
-            )
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        self._cap.set(cv2.CAP_PROP_FPS, self.fps)
+        import asyncio as _asyncio
+        device_id, width, height, fps = self.device_id, self.width, self.height, self.fps
+        def _open():
+            cap = cv2.VideoCapture(device_id)
+            if not cap.isOpened():
+                raise CameraNotOpenedError(f"Cannot open camera device {device_id}")
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            cap.set(cv2.CAP_PROP_FPS, fps)
+            return cap
+        self._cap = await _asyncio.to_thread(_open)
         logger.info("Camera opened", device_id=self.device_id, fps=self.fps)
 
     async def read_frame(self) -> np.ndarray | None:
         if not self._cap or not self._cap.isOpened():
             raise CameraNotOpenedError("Camera not opened")
-        ret, frame = self._cap.read()
+        import asyncio as _asyncio
+        cap = self._cap
+        ret, frame = await _asyncio.to_thread(cap.read)
         if not ret:
             raise CameraReadError("Failed to read frame from camera")
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -155,11 +160,13 @@ class FileSource(CameraSource):
 
         if self._is_video:
             assert self._cap is not None
-            ret, frame = self._cap.read()
+            import asyncio as _asyncio
+            cap = self._cap
+            ret, frame = await _asyncio.to_thread(cap.read)
             if not ret:
                 if self.loop:
-                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ret, frame = self._cap.read()
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = await _asyncio.to_thread(cap.read)
                     if not ret:
                         return None
                 else:

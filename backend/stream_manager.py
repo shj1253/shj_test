@@ -53,6 +53,7 @@ class StreamManager:
         self._mode: str = "idle"
         self._frame_count: int = 0
         self._error_count: int = 0
+        self._last_error: str | None = None
 
         # MJPEG용 마지막 JPEG 프레임
         self.last_jpeg: bytes | None = None
@@ -95,25 +96,32 @@ class StreamManager:
         self._start_loop(frame_interval_ms=frame_interval_ms)
 
     def _sync_open_file(self, path: str, loop: bool) -> None:
-        """블로킹 파일 소스 초기화 (asyncio.to_thread에서 호출)"""
-        import asyncio as _asyncio
+        """블로킹 파일 소스 초기화 + 코덱 검증 (asyncio.to_thread에서 호출)"""
+        import cv2 as _cv2
+        import numpy as _np
         src = FileSource(path=Path(path), loop=loop, frame_interval_ms=33)
-        # FileSource.open()은 async지만 내부는 동기 cv2 호출 — 직접 실행
         p = Path(path)
         suffix = p.suffix.lower()
         if suffix in {".mp4", ".avi", ".mov", ".mkv", ".wmv"}:
-            import cv2 as _cv2
             cap = _cv2.VideoCapture(str(p))
             if not cap.isOpened():
-                raise RuntimeError(f"영상 열기 실패: {path}")
+                raise RuntimeError(f"영상 열기 실패: {p.name}")
+            # 첫 프레임 읽기로 코덱 지원 여부 검증
+            ret, _ = cap.read()
+            if not ret:
+                cap.release()
+                raise RuntimeError(
+                    f"첫 프레임 읽기 실패: {p.name}\n"
+                    "코덱이 지원되지 않을 수 있습니다. "
+                    "H.264 mp4 또는 XVID avi 형식을 사용하세요."
+                )
+            cap.set(_cv2.CAP_PROP_POS_FRAMES, 0)  # 첫 프레임으로 되감기
             src._cap = cap
             src._is_video = True
         elif suffix in {".jpg", ".jpeg", ".png", ".bmp"}:
-            import cv2 as _cv2
             img = _cv2.imread(str(p))
             if img is None:
-                raise RuntimeError(f"이미지 열기 실패: {path}")
-            import numpy as _np
+                raise RuntimeError(f"이미지 열기 실패: {p.name}")
             src._images = [_cv2.cvtColor(img, _cv2.COLOR_BGR2RGB)]
             src._is_video = False
         else:
@@ -217,6 +225,7 @@ class StreamManager:
                 raise
             except Exception as e:
                 self._error_count += 1
+                self._last_error = str(e)
                 logger.error(
                     "Frame loop error",
                     camera_id=self.camera_id,
@@ -329,6 +338,8 @@ class StreamManager:
             "mode": self._mode,
             "frame_count": self._frame_count,
             "error_count": self._error_count,
+            "last_error": self._last_error,
+            "has_frame": self.last_jpeg is not None,
             "last_alert_target": self._last_alert_target,
             "source_info": self._source.get_info() if self._source else None,
             "ws_connections": ws_manager.all_counts(),
