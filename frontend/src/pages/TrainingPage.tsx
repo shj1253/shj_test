@@ -113,14 +113,20 @@ export default function TrainingPage() {
   }
 
   const [resetting, setResetting] = useState(false)
-  const handleReset = async (keepImages: boolean) => {
-    const msg = keepImages
-      ? '학습된 모델과 파생 데이터를 초기화합니다.\n원본 타겟 이미지는 유지됩니다. 계속하시겠습니까?'
-      : '학습된 모델과 모든 데이터(원본 이미지 포함)를 초기화합니다.\n계속하시겠습니까?'
-    if (!window.confirm(msg)) return
+  const [resetModal, setResetModal] = useState<{ open: boolean; keepImages: boolean }>({ open: false, keepImages: true })
+  const [resetConfirmText, setResetConfirmText] = useState('')
+
+  const openResetModal = (keepImages: boolean) => {
+    setResetModal({ open: true, keepImages })
+    setResetConfirmText('')
+  }
+
+  const executeReset = async () => {
     setResetting(true)
+    setResetModal({ open: false, keepImages: true })
+    setResetConfirmText('')
     try {
-      await api.resetTraining(keepImages)
+      await api.resetTraining(resetModal.keepImages)
       setTrainState({ status: 'idle', progress: 0, message: '', result: null })
       setUploadRefreshKey(k => k + 1)
     } catch (e: unknown) {
@@ -534,7 +540,7 @@ export default function TrainingPage() {
             {/* 데이터 초기화 (모델 전환 등) */}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
               <button
-                onClick={() => handleReset(true)}
+                onClick={() => openResetModal(true)}
                 disabled={resetting || trainState.status === 'running'}
                 title="학습 모델 + 파생 데이터 삭제 (원본 이미지 유지)"
                 style={{
@@ -548,7 +554,7 @@ export default function TrainingPage() {
                 <RotateCcw size={10} /> {resetting ? '초기화 중...' : '모델 초기화'}
               </button>
               <button
-                onClick={() => handleReset(false)}
+                onClick={() => openResetModal(false)}
                 disabled={resetting || trainState.status === 'running'}
                 title="모델 + 모든 데이터 삭제 (원본 이미지 포함)"
                 style={{
@@ -655,6 +661,102 @@ export default function TrainingPage() {
         onUploadStatsChange={() => api.getUploadStats().then(r => setUploadStats(r.data)).catch(() => {})}
         t={t}
       />
+
+      {/* ── 초기화 확인 모달 (Vercel 스타일) ── */}
+      {resetModal.open && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={() => setResetModal({ open: false, keepImages: true })}
+        >
+          <div
+            style={{
+              background: t.colors.bgPanel,
+              border: `1px solid ${t.colors.border}`,
+              borderRadius: 12, padding: 24, width: 420, maxWidth: '90vw',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <AlertCircle size={20} style={{ color: '#ef4444', flexShrink: 0 }} />
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: t.colors.text, margin: 0 }}>
+                {resetModal.keepImages ? '모델 초기화' : '전체 초기화'}
+              </h3>
+            </div>
+
+            <div style={{
+              background: '#ef444412', border: '1px solid #ef444430',
+              borderRadius: 8, padding: 12, marginBottom: 16,
+              fontSize: 12, color: t.colors.text, lineHeight: 1.6,
+            }}>
+              {resetModal.keepImages ? (
+                <>
+                  <strong>삭제 대상:</strong> 학습된 모델, 증강 데이터, AL 데이터<br />
+                  <strong>유지 대상:</strong> 원본 타겟 이미지 (재업로드 불필요)
+                </>
+              ) : (
+                <>
+                  <strong style={{ color: '#ef4444' }}>모든 데이터가 삭제됩니다.</strong><br />
+                  학습된 모델, 증강 데이터, 원본 타겟 이미지 전부 삭제됩니다.<br />
+                  이 작업은 되돌릴 수 없습니다.
+                </>
+              )}
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, color: t.colors.textMuted, display: 'block', marginBottom: 6 }}>
+                계속하려면 <strong style={{ color: t.colors.text, fontFamily: 'monospace', background: t.colors.bgInput, padding: '1px 6px', borderRadius: 4 }}>data reset</strong> 을 입력하세요
+              </label>
+              <input
+                type="text"
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                placeholder="data reset"
+                autoFocus
+                style={{
+                  width: '100%', padding: '8px 12px',
+                  background: t.colors.bgInput,
+                  border: `1px solid ${resetConfirmText === 'data reset' ? '#ef4444' : t.colors.border}`,
+                  borderRadius: 6, fontSize: 13,
+                  color: t.colors.text, outline: 'none',
+                  fontFamily: 'monospace',
+                  boxSizing: 'border-box',
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && resetConfirmText === 'data reset') executeReset()
+                  if (e.key === 'Escape') setResetModal({ open: false, keepImages: true })
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setResetModal({ open: false, keepImages: true })}
+                style={{ ...t.btnSecondary, padding: '6px 16px', fontSize: 12 }}
+              >
+                취소
+              </button>
+              <button
+                onClick={executeReset}
+                disabled={resetConfirmText !== 'data reset'}
+                style={{
+                  padding: '6px 16px', fontSize: 12, fontWeight: 600,
+                  border: 'none', borderRadius: 6, cursor: resetConfirmText === 'data reset' ? 'pointer' : 'not-allowed',
+                  background: resetConfirmText === 'data reset' ? '#ef4444' : '#ef444440',
+                  color: resetConfirmText === 'data reset' ? '#fff' : '#ffffff60',
+                  transition: 'all 0.15s',
+                }}
+              >
+                초기화 실행
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
