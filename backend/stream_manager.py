@@ -150,10 +150,12 @@ class StreamManager:
 
                 self._frame_count += 1
 
-                # MJPEG용 JPEG 인코딩
-                bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                self.last_jpeg = jpeg_arr.tobytes()
+                # MJPEG용 JPEG 인코딩 — WS 클라이언트가 있을 때만
+                stream_ch = f"stream_{self.camera_id}"
+                if ws_manager.connection_count(stream_ch) > 0:
+                    bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    self.last_jpeg = jpeg_arr.tobytes()
 
                 # 추론 실행
                 result = await self.pipeline.run(frame)
@@ -172,17 +174,21 @@ class StreamManager:
                 # 메트릭 기록
                 self.metrics_tracker.record(result)
 
-                # WebSocket 브로드캐스트
-                result_dict = result.to_dict()
-                result_dict["frame_count"] = self._frame_count
-                result_dict["camera_id"] = self.camera_id
+                # WebSocket 브로드캐스트 — 클라이언트 있을 때만 직렬화
+                if ws_manager.connection_count(stream_ch) > 0:
+                    result_dict = result.to_dict()
+                    result_dict["frame_count"] = self._frame_count
+                    result_dict["camera_id"] = self.camera_id
 
-                # 알림이 있으면 첨부 (한 번만)
-                if self._pending_alert:
-                    result_dict["alert"] = self._pending_alert
-                    self._pending_alert = None
+                    # 알림이 있으면 첨부 (한 번만)
+                    if self._pending_alert:
+                        result_dict["alert"] = self._pending_alert
+                        self._pending_alert = None
 
-                await ws_manager.broadcast(f"stream_{self.camera_id}", result_dict)
+                    await ws_manager.broadcast(stream_ch, result_dict)
+                else:
+                    # 알림은 별도 채널이므로 pending 유지
+                    pass
 
                 self._error_count = 0
 

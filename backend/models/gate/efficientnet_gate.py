@@ -14,6 +14,7 @@ import numpy as np
 import timm
 import torch
 import torchvision.transforms as T
+from PIL import Image
 from sklearn.covariance import EmpiricalCovariance
 
 from backend.exceptions import ModelLoadError, ModelNotLoadedError, ModelSaveError
@@ -88,16 +89,15 @@ class EfficientNetGate(BaseGateModel):
     @torch.no_grad()
     def _extract(self, image: np.ndarray) -> np.ndarray:
         tensor = self._transform(
-            __import__("PIL").Image.fromarray(image)
+            Image.fromarray(image)
         ).unsqueeze(0).to(self.device)
         feat = self._backbone(tensor)
         return feat.squeeze().cpu().numpy().astype(np.float32)
 
     @torch.no_grad()
     def _extract_batch(self, images: list[np.ndarray]) -> np.ndarray:
-        pil = __import__("PIL").Image
         tensors = torch.stack([
-            self._transform(pil.Image.fromarray(img)) for img in images
+            self._transform(Image.fromarray(img)) for img in images
         ]).to(self.device)
         feats = self._backbone(tensors)
         return feats.cpu().numpy().astype(np.float32)

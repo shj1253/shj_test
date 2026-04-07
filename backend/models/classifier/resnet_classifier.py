@@ -89,7 +89,9 @@ class ResNetClassifier(BaseClassifierModel):
             nn.Dropout(p=self.dropout_rate),
             nn.Linear(in_features, self.num_classes),
         )
-        return model.to(self.device)
+        model = model.to(self.device)
+        model.eval()  # 추론 모드 기본 — fine_tune()에서 train()으로 전환
+        return model
 
     def _build_transform(self) -> T.Compose:
         return T.Compose([
@@ -131,7 +133,6 @@ class ResNetClassifier(BaseClassifierModel):
             raise ModelNotLoadedError("ResNetClassifier not trained/loaded")
 
         t0 = time.perf_counter()
-        self._model.eval()
 
         logits = self._forward(frame)
         probs = torch.softmax(logits, dim=-1).squeeze().cpu().numpy()
@@ -143,7 +144,6 @@ class ResNetClassifier(BaseClassifierModel):
             raise ModelNotLoadedError("ResNetClassifier not trained/loaded")
 
         t0 = time.perf_counter()
-        self._model.eval()
 
         logits = self._forward_batch(frames)
         probs_batch = torch.softmax(logits, dim=-1).cpu().numpy()
@@ -156,7 +156,6 @@ class ResNetClassifier(BaseClassifierModel):
     def predict_proba(self, frame: np.ndarray) -> np.ndarray:
         if not self._is_loaded:
             raise ModelNotLoadedError("ResNetClassifier not trained/loaded")
-        self._model.eval()
         logits = self._forward(frame)
         return torch.softmax(logits, dim=-1).squeeze().cpu().numpy()
 
