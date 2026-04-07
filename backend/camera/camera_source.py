@@ -22,8 +22,10 @@ from backend.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# 프레임 큐 최대 크기 (초과 시 reader 스레드가 소비 대기)
-_QUEUE_MAXSIZE = 8
+# 파일 재생: 순서 보장 버퍼 (모든 프레임 처리)
+_FILE_QUEUE_MAXSIZE = 8
+# 실시간: 최신 프레임 우선 (느리면 드롭)
+_LIVE_QUEUE_MAXSIZE = 1
 
 
 class CameraSource(ABC):
@@ -102,23 +104,34 @@ class OpenCVCamera(CameraSource):
 
         self._cap = await asyncio.to_thread(_open)
         loop = asyncio.get_event_loop()
-        self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
+        # 실시간: 큐 크기 1 — 추론이 느려도 항상 최신 프레임만 처리
+        self._queue = asyncio.Queue(maxsize=_LIVE_QUEUE_MAXSIZE)
         self._stop_evt.clear()
         self._thread = _start_reader(self._reader_loop, loop, f"cam_reader_{device_id}")
         logger.info("Camera opened", device_id=device_id, fps=fps)
 
     def _reader_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """전용 reader 스레드: cap.read() → queue.put()"""
+        """전용 reader 스레드: cap.read() → queue.put() (최신 프레임 우선, 느리면 드롭)"""
         assert self._cap and self._queue
+
+        async def _replace(frame: np.ndarray) -> None:
+            """큐를 비우고 최신 프레임 push — 항상 최신 1프레임만 유지"""
+            while not self._queue.empty():
+                try:
+                    self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            await self._queue.put(frame)
+
         while not self._stop_evt.is_set():
             ret, frame = self._cap.read()
             if not ret:
                 asyncio.run_coroutine_threadsafe(self._queue.put(None), loop)
                 break
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            fut = asyncio.run_coroutine_threadsafe(self._queue.put(rgb), loop)
+            fut = asyncio.run_coroutine_threadsafe(_replace(rgb), loop)
             try:
-                fut.result(timeout=1.0)
+                fut.result(timeout=0.5)
             except concurrent.futures.TimeoutError:
                 continue
             except Exception:
@@ -211,7 +224,8 @@ class FileSource(CameraSource):
             self._is_video = True
 
             loop = asyncio.get_event_loop()
-            self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
+            # 파일: 버퍼 큐 — 모든 프레임 순서대로 처리
+            self._queue = asyncio.Queue(maxsize=_FILE_QUEUE_MAXSIZE)
             self._stop_evt.clear()
             self._thread = _start_reader(
                 self._reader_loop, loop, f"file_reader_{self.path.name}"
@@ -330,22 +344,31 @@ class RtspSource(CameraSource):
 
         self._cap = await asyncio.to_thread(_open)
         loop = asyncio.get_event_loop()
-        self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
+        self._queue = asyncio.Queue(maxsize=_LIVE_QUEUE_MAXSIZE)
         self._stop_evt.clear()
         self._thread = _start_reader(self._reader_loop, loop, "rtsp_reader")
         logger.info("RTSP source opened", url=self.url)
 
     def _reader_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         assert self._cap and self._queue
+
+        async def _replace(frame: np.ndarray) -> None:
+            while not self._queue.empty():
+                try:
+                    self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            await self._queue.put(frame)
+
         while not self._stop_evt.is_set():
             ret, frame = self._cap.read()
             if not ret:
                 asyncio.run_coroutine_threadsafe(self._queue.put(None), loop)
                 break
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            fut = asyncio.run_coroutine_threadsafe(self._queue.put(rgb), loop)
+            fut = asyncio.run_coroutine_threadsafe(_replace(rgb), loop)
             try:
-                fut.result(timeout=1.0)
+                fut.result(timeout=0.5)
             except concurrent.futures.TimeoutError:
                 continue
             except Exception:
