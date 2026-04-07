@@ -127,6 +127,10 @@ async def reinit_pipeline(camera_id: str | None = None) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작 / 종료 시 리소스 관리"""
+    # 영상 파일 업로드 크기 제한 해제 (기본 1MB → 무제한)
+    from starlette.formparsers import MultiPartParser
+    MultiPartParser.max_file_size = float("inf")
+
     logger.info("Canon Project API starting up")
     settings.ensure_dirs()
 
