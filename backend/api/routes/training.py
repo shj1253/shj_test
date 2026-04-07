@@ -163,6 +163,8 @@ def get_preprocess_options():
 _ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 _RAW_DIR = Path("artifacts/data/raw")
 _MODEL_DIR = Path("artifacts/models")
+_AUG_DIR   = Path("artifacts/data/augmented")
+_ANNO_PATH  = Path("artifacts/data/annotations_coco.json")
 
 # ── 학습 실행 상태 ────────────────────────────────────────────────────────────
 
@@ -274,7 +276,77 @@ async def _run_training() -> None:
         clf_path = _MODEL_DIR / "classifier.pth"
         await loop.run_in_executor(None, clf.save, clf_path)
 
-        # Step 7: 파이프라인 재초기화 (학습된 모델 즉시 반영)
+        # Step 7: 증강 이미지 저장 + COCO JSON 생성
+        await _broadcast(92, "증강 데이터 저장 중...")
+
+        def _save_augmented_and_coco() -> None:
+            import json, shutil
+            from datetime import datetime
+
+            # 기존 증강 디렉터리 초기화
+            if _AUG_DIR.exists():
+                shutil.rmtree(_AUG_DIR)
+
+            coco_images, coco_annots = [], []
+            categories = [
+                {"id": tid, "name": f"T{tid}", "supercategory": "target"}
+                for tid in sorted(target_images.keys())
+            ]
+            img_id, ann_id = 1, 1
+            label_cursor = 0
+
+            for target_id, _ in sorted_targets:
+                t_aug_dir = _AUG_DIR / f"T{target_id}"
+                t_aug_dir.mkdir(parents=True, exist_ok=True)
+                count = all_labels.count(target_id - 1)
+                imgs_for_target = all_images[label_cursor: label_cursor + count]
+                label_cursor += count
+
+                for i, img in enumerate(imgs_for_target):
+                    fname = f"aug_{i:04d}.jpg"
+                    fpath = t_aug_dir / fname
+                    bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    cv2.imwrite(str(fpath), bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                    h, w = img.shape[:2]
+                    rel_path = f"augmented/T{target_id}/{fname}"
+                    coco_images.append({"id": img_id, "file_name": rel_path, "width": w, "height": h})
+                    coco_annots.append({"id": ann_id, "image_id": img_id, "category_id": target_id})
+                    img_id += 1; ann_id += 1
+
+            # raw 이미지도 COCO에 포함
+            for target_id in sorted(target_images.keys()):
+                raw_dir = _RAW_DIR / f"T{target_id}"
+                for fpath in sorted(raw_dir.iterdir()):
+                    if fpath.suffix.lower() in _ALLOWED_EXTS:
+                        img = cv2.imread(str(fpath))
+                        if img is None: continue
+                        h, w = img.shape[:2]
+                        rel_path = f"raw/T{target_id}/{fpath.name}"
+                        coco_images.append({"id": img_id, "file_name": rel_path, "width": w, "height": h})
+                        coco_annots.append({"id": ann_id, "image_id": img_id, "category_id": target_id})
+                        img_id += 1; ann_id += 1
+
+            coco = {
+                "info": {
+                    "description": "Canon Project — Augmented Training Dataset",
+                    "version": "1.0",
+                    "date_created": datetime.now().isoformat(),
+                    "num_targets": len(categories),
+                    "total_images": len(coco_images),
+                },
+                "categories": categories,
+                "images": coco_images,
+                "annotations": coco_annots,
+            }
+            _ANNO_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(_ANNO_PATH, "w", encoding="utf-8") as f:
+                import json
+                json.dump(coco, f, ensure_ascii=False, indent=2)
+
+        await loop.run_in_executor(None, _save_augmented_and_coco)
+        await _broadcast(96, "데이터 저장 완료. 파이프라인 재초기화 중...")
+
+        # Step 8: 파이프라인 재초기화 (학습된 모델 즉시 반영)
         from backend.main import reinit_pipeline
         await reinit_pipeline()
 
@@ -424,12 +496,15 @@ async def reset_training(keep_images: bool = True):
             shutil.rmtree(p) if p.is_dir() else p.unlink()
             removed.append(str(p))
 
-    # 2. 학습/AL 파생 데이터 삭제 (labeled, al_queue)
-    for d in [Path("artifacts/data/labeled"), Path("artifacts/data/al_queue")]:
+    # 2. 학습/AL 파생 데이터 삭제 (augmented, labeled, al_queue, coco json)
+    for d in [_AUG_DIR, Path("artifacts/data/labeled"), Path("artifacts/data/al_queue")]:
         if d.exists():
             shutil.rmtree(d)
             d.mkdir(parents=True)
             removed.append(str(d))
+    if _ANNO_PATH.exists():
+        _ANNO_PATH.unlink()
+        removed.append(str(_ANNO_PATH))
 
     # 3. 원본 이미지 삭제 (선택)
     if not keep_images:
@@ -449,6 +524,57 @@ async def reset_training(keep_images: bool = True):
 
     logger.info("Training data reset", kept_images=keep_images, removed=removed)
     return {"status": "reset", "kept_images": keep_images, "removed": removed}
+
+
+@router.get("/export")
+async def export_data():
+    """
+    학습 데이터 전체 ZIP 다운로드
+    포함: 원본 이미지, 증강 이미지, COCO JSON, 학습된 모델
+    """
+    import io, zipfile
+    from datetime import datetime
+    from fastapi.responses import StreamingResponse
+
+    artifacts = Path("artifacts")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    zip_name = f"canon_export_{timestamp}.zip"
+
+    # 포함할 경로 목록 (존재하는 것만)
+    include_dirs = [
+        artifacts / "data" / "raw",
+        artifacts / "data" / "augmented",
+        artifacts / "data" / "labeled",
+        artifacts / "models",
+    ]
+    include_files = [
+        artifacts / "data" / "annotations_coco.json",
+    ]
+
+    def _generate_zip():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+            # 디렉터리 순회
+            for base_dir in include_dirs:
+                if not base_dir.exists():
+                    continue
+                for fpath in base_dir.rglob("*"):
+                    if fpath.is_file() and fpath.name != ".gitkeep":
+                        arcname = str(fpath.relative_to(artifacts))
+                        zf.write(fpath, arcname)
+            # 단일 파일
+            for fpath in include_files:
+                if fpath.exists():
+                    arcname = str(fpath.relative_to(artifacts))
+                    zf.write(fpath, arcname)
+        buf.seek(0)
+        yield buf.read()
+
+    return StreamingResponse(
+        _generate_zip(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
 
 
 @router.delete("/images/{target_id}/{filename}")

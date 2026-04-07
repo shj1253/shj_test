@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Lock, Check, Square, AlertCircle, CheckCircle2, Loader2, Info, Upload, X, FolderOpen, Play, RotateCcw } from 'lucide-react'
+import { Lock, Check, Square, AlertCircle, CheckCircle2, Loader2, Info, Upload, X, FolderOpen, Play, RotateCcw, Download } from 'lucide-react'
 import { api } from '../api/httpClient'
 import AugmentationControl from '../components/AugmentationControl/AugmentationControl'
 import { useTheme } from '../hooks/useTheme'
@@ -512,6 +512,24 @@ export default function TrainingPage() {
               >
                 <RotateCcw size={11} /> 결과 닫기
               </button>
+            )}
+            {trainState.status === 'completed' && (
+              <a
+                href={api.exportDataUrl()}
+                download
+                style={{
+                  ...t.btnPrimary,
+                  background: '#16a34a',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  textDecoration: 'none',
+                  fontSize: 11,
+                  padding: '4px 10px',
+                }}
+              >
+                <Download size={11} /> 데이터 다운로드 (ZIP)
+              </a>
             )}
             {/* 데이터 초기화 (모델 전환 등) */}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>

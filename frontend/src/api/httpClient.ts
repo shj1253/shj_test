@@ -119,6 +119,7 @@ export const api = {
   getTrainingStatus: () => http.get('/training/status'),
   resetTraining: (keepImages: boolean) =>
     http.post(`/training/reset?keep_images=${keepImages}`),
+  exportDataUrl: () => `${http.defaults.baseURL ?? ''}/training/export`,
 
   // Training config
   getTrainingConfig: () => http.get('/training/config'),
