@@ -399,6 +399,58 @@ def get_target_image(target_id: int, filename: str):
     return FileResponse(str(image_path))
 
 
+@router.post("/reset")
+async def reset_training(keep_images: bool = True):
+    """
+    학습 데이터 + 모델 파일 초기화 (모델 전환 시 사용)
+    keep_images=True : 원본 타겟 이미지는 유지 (기본값)
+    keep_images=False: 원본 이미지까지 전부 삭제
+    """
+    import shutil
+    from backend.models.registry import registry
+    from backend.main import reinit_pipeline
+
+    # 진행 중인 학습이 있으면 거부
+    global _training_task
+    if _training_task and not _training_task.done():
+        raise HTTPException(status_code=409, detail="학습이 진행 중입니다. 완료 후 초기화하세요.")
+
+    removed: list[str] = []
+
+    # 1. 모델 파일 삭제
+    for p in [_MODEL_DIR / "gate_a.pkl", _MODEL_DIR / "classifier.pth",
+              _MODEL_DIR / "gate", _MODEL_DIR / "classifier"]:
+        if p.exists():
+            shutil.rmtree(p) if p.is_dir() else p.unlink()
+            removed.append(str(p))
+
+    # 2. 학습/AL 파생 데이터 삭제 (labeled, al_queue)
+    for d in [Path("artifacts/data/labeled"), Path("artifacts/data/al_queue")]:
+        if d.exists():
+            shutil.rmtree(d)
+            d.mkdir(parents=True)
+            removed.append(str(d))
+
+    # 3. 원본 이미지 삭제 (선택)
+    if not keep_images:
+        raw_dir = Path("artifacts/data/raw")
+        for target_dir in raw_dir.iterdir():
+            if target_dir.is_dir():
+                shutil.rmtree(target_dir)
+                target_dir.mkdir()
+        removed.append(str(raw_dir))
+
+    # 4. 메모리의 모델도 미학습 상태로 교체
+    new_gate = registry.create_gate(settings.gate_model)
+    new_clf = registry.create_classifier(backbone=settings.classifier_backbone)
+    registry.register_gate("gate_a", new_gate)
+    registry.register_classifier("classifier", new_clf)
+    await reinit_pipeline()
+
+    logger.info("Training data reset", kept_images=keep_images, removed=removed)
+    return {"status": "reset", "kept_images": keep_images, "removed": removed}
+
+
 @router.delete("/images/{target_id}/{filename}")
 def delete_target_image(target_id: int, filename: str):
     """타겟 이미지 삭제"""

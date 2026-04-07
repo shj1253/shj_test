@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -129,11 +130,28 @@ async def lifespan(app: FastAPI):
     logger.info("Canon Project API starting up")
     settings.ensure_dirs()
 
-    # 기본 모델 생성 (미학습 상태)
+    # 기본 모델 생성
     gate = registry.create_gate(settings.gate_model)
     clf = registry.create_classifier(backbone=settings.classifier_backbone)
     registry.register_gate("gate_a", gate)
     registry.register_classifier("classifier", clf)
+
+    # 저장된 모델 자동 로드 (학습 이력 복원)
+    _MODEL_DIR = Path("artifacts/models")
+    gate_path = _MODEL_DIR / "gate_a.pkl"
+    clf_path = _MODEL_DIR / "classifier.pth"
+    if gate_path.exists():
+        try:
+            gate.load(gate_path)
+            logger.info("Gate model restored from disk", path=str(gate_path))
+        except Exception as e:
+            logger.warning("Gate model load failed — starting untrained", error=str(e))
+    if clf_path.exists():
+        try:
+            clf.load(clf_path)
+            logger.info("Classifier restored from disk", path=str(clf_path))
+        except Exception as e:
+            logger.warning("Classifier load failed — starting untrained", error=str(e))
 
     # 기본 카메라 "0" 미리 생성 (시작은 API 호출로)
     await get_or_create_stream_manager("0")

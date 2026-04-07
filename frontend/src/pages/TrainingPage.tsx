@@ -112,6 +112,24 @@ export default function TrainingPage() {
     }
   }
 
+  const [resetting, setResetting] = useState(false)
+  const handleReset = async (keepImages: boolean) => {
+    const msg = keepImages
+      ? '학습된 모델과 파생 데이터를 초기화합니다.\n원본 타겟 이미지는 유지됩니다. 계속하시겠습니까?'
+      : '학습된 모델과 모든 데이터(원본 이미지 포함)를 초기화합니다.\n계속하시겠습니까?'
+    if (!window.confirm(msg)) return
+    setResetting(true)
+    try {
+      await api.resetTraining(keepImages)
+      setTrainState({ status: 'idle', progress: 0, message: '', result: null })
+      setUploadRefreshKey(k => k + 1)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : '초기화 실패')
+    } finally {
+      setResetting(false)
+    }
+  }
+
   const [mandatorySteps, setMandatorySteps] = useState<PreprocessStep[]>(DEFAULT_MANDATORY)
   const [optionalMeta, setOptionalMeta] = useState<Record<string, OptionalMeta>>(DEFAULT_OPTIONAL)
   const [intensityOptions, setIntensityOptions] = useState<Record<AugIntensity, IntensityOption>>(DEFAULT_INTENSITY)
@@ -492,9 +510,40 @@ export default function TrainingPage() {
                 onClick={() => setTrainState({ status: 'idle', progress: 0, message: '', result: null })}
                 style={t.btnSecondary}
               >
-                <RotateCcw size={11} /> 초기화
+                <RotateCcw size={11} /> 결과 닫기
               </button>
             )}
+            {/* 데이터 초기화 (모델 전환 등) */}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => handleReset(true)}
+                disabled={resetting || trainState.status === 'running'}
+                title="학습 모델 + 파생 데이터 삭제 (원본 이미지 유지)"
+                style={{
+                  ...t.btnSecondary,
+                  fontSize: 10,
+                  opacity: (resetting || trainState.status === 'running') ? 0.5 : 1,
+                  color: '#f97316',
+                  border: '1px solid #f9731640',
+                }}
+              >
+                <RotateCcw size={10} /> {resetting ? '초기화 중...' : '모델 초기화'}
+              </button>
+              <button
+                onClick={() => handleReset(false)}
+                disabled={resetting || trainState.status === 'running'}
+                title="모델 + 모든 데이터 삭제 (원본 이미지 포함)"
+                style={{
+                  ...t.btnSecondary,
+                  fontSize: 10,
+                  opacity: (resetting || trainState.status === 'running') ? 0.5 : 1,
+                  color: '#ef4444',
+                  border: '1px solid #ef444440',
+                }}
+              >
+                <RotateCcw size={10} /> 전체 초기화
+              </button>
+            </div>
           </div>
 
           {/* Progress */}

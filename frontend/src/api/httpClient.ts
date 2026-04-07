@@ -117,6 +117,8 @@ export const api = {
   // Training run
   startTraining: () => http.post('/training/run'),
   getTrainingStatus: () => http.get('/training/status'),
+  resetTraining: (keepImages: boolean) =>
+    http.post(`/training/reset?keep_images=${keepImages}`),
 
   // Training config
   getTrainingConfig: () => http.get('/training/config'),
