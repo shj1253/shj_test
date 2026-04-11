@@ -144,6 +144,14 @@ class StreamManager:
         self._inference_busy = False
         logger.info("Stream stopped", camera_id=self.camera_id)
 
+    # ── JPEG 인코딩 (스레드풀용) ──────────────────────────────────────────
+
+    @staticmethod
+    def _encode_jpeg(frame: np.ndarray) -> bytes:
+        bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 65])
+        return jpeg_arr.tobytes()
+
     # ── 프레임 루프 ────────────────────────────────────────────────────────
 
     async def _frame_loop(self, frame_interval_ms: int) -> None:
@@ -168,10 +176,10 @@ class StreamManager:
 
                 self._frame_count += 1
 
-                # ── 디스플레이: JPEG 인코딩 즉시 수행 (원본 해상도) ──
-                bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                jpeg_bytes = jpeg_arr.tobytes()
+                # ── 디스플레이: JPEG 인코딩 (스레드풀에서 실행 — 이벤트 루프 블로킹 방지) ──
+                jpeg_bytes = await asyncio.get_event_loop().run_in_executor(
+                    None, self._encode_jpeg, frame
+                )
                 self.last_jpeg = jpeg_bytes
                 self._frame_seq += 1
 

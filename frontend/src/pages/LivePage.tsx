@@ -388,23 +388,27 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
       .finally(() => setDevicesLoading(false))
   }, [showCameraGuide])
 
-  // WS 바이너리로 JPEG 프레임 수신 (HTTP 폴링 대체 — 지연 최소화)
-  const [snapUrl, setSnapUrl] = useState<string | null>(null)
-  const snapBlobRef = useRef<string | null>(null)
+  // WS 바이너리로 JPEG 프레임 수신 — ref로 직접 img.src 업데이트 (React re-render 우회)
+  const imgRef = useRef<HTMLImageElement>(null)
+  const prevBlobUrl = useRef<string | null>(null)
+  const [hasFrame, setHasFrame] = useState(false)
 
   const handleFrame = useCallback((blob: Blob) => {
-    if (!isStreaming || !showFeed) return
+    if (!imgRef.current) return
     const url = URL.createObjectURL(blob)
-    setSnapUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
-    snapBlobRef.current = url
-  }, [isStreaming, showFeed])
+    imgRef.current.src = url
+    if (prevBlobUrl.current) URL.revokeObjectURL(prevBlobUrl.current)
+    prevBlobUrl.current = url
+    if (!hasFrame) setHasFrame(true)
+  }, [hasFrame])
 
   useWebSocketBinary(`feed/${cameraId}`, handleFrame)
 
-  // 스트리밍 중지 시 스냅샷 정리
+  // 스트리밍 중지 시 정리
   useEffect(() => {
     if (!isStreaming || !showFeed) {
-      setSnapUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
+      if (prevBlobUrl.current) { URL.revokeObjectURL(prevBlobUrl.current); prevBlobUrl.current = null }
+      setHasFrame(false)
     }
   }, [isStreaming, showFeed])
 
@@ -606,12 +610,15 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
       {/* 피드 영역 */}
       <div className="flex-1 relative overflow-hidden" style={{ background: '#000', minHeight: 100 }}>
         {isStreaming && showFeed ? (
-          snapUrl
-            ? <img src={snapUrl} alt={`cam ${cameraId}`}
-                   style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
-            : <div className="flex items-center justify-center h-full" style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>
+          <>
+            <img ref={imgRef} alt={`cam ${cameraId}`}
+                 style={{ width: '100%', height: '100%', objectFit: 'contain', display: hasFrame ? 'block' : 'none' }} />
+            {!hasFrame && (
+              <div className="flex items-center justify-center h-full" style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>
                 프레임 대기 중...
               </div>
+            )}
+          </>
         ) : isStreaming ? (
           <div className="flex items-center justify-center h-full" style={{ color: t.colors.textDim }}>
             <div className="text-center space-y-1">
