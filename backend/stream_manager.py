@@ -57,6 +57,11 @@ class StreamManager:
 
         # MJPEG용 마지막 JPEG 프레임
         self.last_jpeg: bytes | None = None
+        self._frame_seq: int = 0
+
+        # 추론 분리 — 디스플레이와 추론 비동기 병렬 실행
+        self._inference_task: asyncio.Task | None = None
+        self._inference_busy: bool = False
 
         # 알림 디바운싱
         self._debounce_votes: dict[int, int] = {}  # target_id → 연속 프레임 수
@@ -120,6 +125,12 @@ class StreamManager:
 
     async def stop(self) -> None:
         self._running = False
+        if self._inference_task and not self._inference_task.done():
+            self._inference_task.cancel()
+            try:
+                await self._inference_task
+            except asyncio.CancelledError:
+                pass
         if self._task and not self._task.done():
             self._task.cancel()
             try:
@@ -130,11 +141,18 @@ class StreamManager:
             await self._source.close()
             self._source = None
         self._mode = "idle"
+        self._inference_busy = False
         logger.info("Stream stopped", camera_id=self.camera_id)
 
     # ── 프레임 루프 ────────────────────────────────────────────────────────
 
     async def _frame_loop(self, frame_interval_ms: int) -> None:
+        """디스플레이 + 추론 분리 루프.
+
+        매 프레임: JPEG 인코딩 즉시 수행 (디스플레이용, ~2ms)
+        추론: 이전 추론이 끝났을 때만 새 프레임으로 실행 (비동기 병렬)
+        → 화면은 카메라 FPS 그대로 부드럽게, 추론은 자기 속도대로.
+        """
         interval_s = frame_interval_ms / 1000.0
 
         while self._running:
@@ -150,52 +168,18 @@ class StreamManager:
 
                 self._frame_count += 1
 
-                # MJPEG용 JPEG 인코딩 — 항상 수행 (snapshot 폴링에서도 사용)
-                stream_ch = f"stream_{self.camera_id}"
+                # ── 디스플레이: JPEG 인코딩 즉시 수행 (원본 해상도) ──
                 bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                # 전송용 해상도 축소 (원본 유지, 인코딩만 작게)
-                h, w = bgr.shape[:2]
-                if w > 640:
-                    scale = 640 / w
-                    bgr_small = cv2.resize(bgr, (640, int(h * scale)), interpolation=cv2.INTER_AREA)
-                else:
-                    bgr_small = bgr
-                _, jpeg_arr = cv2.imencode('.jpg', bgr_small, [cv2.IMWRITE_JPEG_QUALITY, 55])
+                _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
                 self.last_jpeg = jpeg_arr.tobytes()
-                self._frame_seq = getattr(self, '_frame_seq', 0) + 1
+                self._frame_seq += 1
 
-                # 추론 실행
-                result = await self.pipeline.run(frame)
-
-                # 알림 디바운싱 처리
-                await self._process_alert(result)
-
-                # AL 수집
-                if self.al_engine:
-                    added = await self.al_engine.process(frame, result)
-                    if added:
-                        self.metrics_tracker.update_al_queue_size(
-                            self.al_engine.queue.stats["unlabeled_count"]
-                        )
-
-                # 메트릭 기록
-                self.metrics_tracker.record(result)
-
-                # WebSocket 브로드캐스트 — 클라이언트 있을 때만 직렬화
-                if ws_manager.connection_count(stream_ch) > 0:
-                    result_dict = result.to_dict()
-                    result_dict["frame_count"] = self._frame_count
-                    result_dict["camera_id"] = self.camera_id
-
-                    # 알림이 있으면 첨부 (한 번만)
-                    if self._pending_alert:
-                        result_dict["alert"] = self._pending_alert
-                        self._pending_alert = None
-
-                    await ws_manager.broadcast(stream_ch, result_dict)
-                else:
-                    # 알림은 별도 채널이므로 pending 유지
-                    pass
+                # ── 추론: 이전 추론이 끝났으면 새 프레임으로 시작 ──
+                if not self._inference_busy:
+                    self._inference_busy = True
+                    self._inference_task = asyncio.create_task(
+                        self._run_inference(frame, self._frame_count)
+                    )
 
                 self._error_count = 0
 
@@ -223,10 +207,8 @@ class StreamManager:
                     self._running = False
                     break
 
-                # C-3 fix: exponential backoff before retry (100ms → 1s → 5s)
                 backoff_s = min(5.0, 0.1 * (2 ** min(self._error_count - 1, 5)))
                 await asyncio.sleep(backoff_s)
-                # H-R6-3 fix: skip frame rate sleep after backoff to avoid stacking delays
                 continue
 
             # 프레임 레이트 조절 (카메라 모드만 — 파일은 리더 스레드가 FPS 제어)
@@ -235,6 +217,43 @@ class StreamManager:
                 sleep_time = max(0.0, interval_s - elapsed)
                 if sleep_time > 0:
                     await asyncio.sleep(sleep_time)
+
+    async def _run_inference(self, frame: np.ndarray, frame_count: int) -> None:
+        """추론 + 알림 + 메트릭 + WS 브로드캐스트 (디스플레이 루프와 병렬 실행)"""
+        try:
+            result = await self.pipeline.run(frame)
+
+            # 알림 디바운싱 처리
+            await self._process_alert(result)
+
+            # AL 수집
+            if self.al_engine:
+                added = await self.al_engine.process(frame, result)
+                if added:
+                    self.metrics_tracker.update_al_queue_size(
+                        self.al_engine.queue.stats["unlabeled_count"]
+                    )
+
+            # 메트릭 기록
+            self.metrics_tracker.record(result)
+
+            # WebSocket 브로드캐스트 — 클라이언트 있을 때만 직렬화
+            stream_ch = f"stream_{self.camera_id}"
+            if ws_manager.connection_count(stream_ch) > 0:
+                result_dict = result.to_dict()
+                result_dict["frame_count"] = frame_count
+                result_dict["camera_id"] = self.camera_id
+
+                if self._pending_alert:
+                    result_dict["alert"] = self._pending_alert
+                    self._pending_alert = None
+
+                await ws_manager.broadcast(stream_ch, result_dict)
+
+        except Exception as e:
+            logger.error("Inference error", camera_id=self.camera_id, error=str(e))
+        finally:
+            self._inference_busy = False
 
     async def _process_alert(self, result) -> None:
         """
