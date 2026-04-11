@@ -223,10 +223,14 @@ async def camera_snapshot(camera_id: str):
     mgr = get_stream_manager(camera_id)
     if not mgr or not mgr.last_jpeg:
         raise HTTPException(status_code=503, detail="No frame available")
+    seq = getattr(mgr, '_frame_seq', 0)
     return Response(
         content=mgr.last_jpeg,
         media_type="image/jpeg",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "X-Frame-Seq": str(seq),
+        },
     )
 
 

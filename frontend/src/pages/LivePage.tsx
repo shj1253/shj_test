@@ -388,15 +388,22 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
       .finally(() => setDevicesLoading(false))
   }, [showCameraGuide])
 
-  // 스냅샷 폴링 — MJPEG img 대신 200ms마다 단일 JPEG fetch (브라우저 호환성 우수)
+  // 스냅샷 폴링 — 프레임 시퀀스 기반 중복 방지
   const [snapUrl, setSnapUrl] = useState<string | null>(null)
   const snapBlobRef = useRef<string | null>(null)
+  const lastSeqRef = useRef<string>('')
   useEffect(() => {
-    if (!isStreaming || !showFeed) { setSnapUrl(null); return }
+    if (!isStreaming || !showFeed) { setSnapUrl(null); lastSeqRef.current = ''; return }
+    let polling = true
     const poll = async () => {
+      if (!polling) return
       try {
         const res = await fetch(`${BASE_URL}/camera/${cameraId}/snapshot?t=${Date.now()}`)
         if (!res.ok) return
+        // 동일 프레임이면 렌더링 건너뛰기
+        const seq = res.headers.get('X-Frame-Seq') ?? ''
+        if (seq && seq === lastSeqRef.current) return
+        lastSeqRef.current = seq
         const blob = await res.blob()
         const url = URL.createObjectURL(blob)
         setSnapUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
@@ -404,8 +411,8 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
       } catch { /* 스트림 아직 준비 중 */ }
     }
     poll()
-    const iv = setInterval(poll, 100)
-    return () => { clearInterval(iv); if (snapBlobRef.current) URL.revokeObjectURL(snapBlobRef.current) }
+    const iv = setInterval(poll, 80)
+    return () => { polling = false; clearInterval(iv); if (snapBlobRef.current) URL.revokeObjectURL(snapBlobRef.current) }
   }, [isStreaming, showFeed, cameraId])
 
   // C-2 fix: 컴포넌트 언마운트 시 타이머 정리 → 언마운트 후 setState 오류 방지

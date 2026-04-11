@@ -153,8 +153,16 @@ class StreamManager:
                 # MJPEG용 JPEG 인코딩 — 항상 수행 (snapshot 폴링에서도 사용)
                 stream_ch = f"stream_{self.camera_id}"
                 bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                # 전송용 해상도 축소 (원본 유지, 인코딩만 작게)
+                h, w = bgr.shape[:2]
+                if w > 640:
+                    scale = 640 / w
+                    bgr_small = cv2.resize(bgr, (640, int(h * scale)), interpolation=cv2.INTER_AREA)
+                else:
+                    bgr_small = bgr
+                _, jpeg_arr = cv2.imencode('.jpg', bgr_small, [cv2.IMWRITE_JPEG_QUALITY, 55])
                 self.last_jpeg = jpeg_arr.tobytes()
+                self._frame_seq = getattr(self, '_frame_seq', 0) + 1
 
                 # 추론 실행
                 result = await self.pipeline.run(frame)
