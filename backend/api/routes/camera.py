@@ -32,6 +32,66 @@ class FileSourceRequest(BaseModel):
     frame_interval_ms: int = 33
 
 
+# ── 시스템 카메라 장치 탐지 ─────────────────────────────────────────────────
+
+def _enumerate_cameras(max_index: int = 5) -> list[dict]:
+    """OpenCV로 사용 가능한 카메라 장치를 탐지한다."""
+    import cv2
+    devices: list[dict] = []
+    for idx in range(max_index):
+        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+        if cap.isOpened():
+            # 해상도로 실제 장치 여부 확인
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+            devices.append({"device_id": idx, "name": f"카메라 {idx}", "resolution": f"{w}x{h}"})
+        else:
+            cap.release()
+    return devices
+
+
+def _enumerate_cameras_wmi() -> list[dict]:
+    """Windows WMI로 카메라 장치 이름을 가져온다."""
+    try:
+        import subprocess, json
+        # PowerShell로 PnP 장치 중 카메라 클래스 조회
+        cmd = (
+            'powershell -Command "'
+            "Get-PnpDevice -Class Camera -Status OK "
+            "| Select-Object -Property FriendlyName "
+            "| ConvertTo-Json"
+            '"'
+        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, shell=True)
+        if result.returncode != 0:
+            return []
+        data = json.loads(result.stdout)
+        if isinstance(data, dict):
+            data = [data]
+        return [{"name": d.get("FriendlyName", "Unknown")} for d in data]
+    except Exception:
+        return []
+
+
+@router.get("/devices")
+async def detect_devices():
+    """시스템에 연결된 카메라 장치 목록 (장치 이름 + device_id)"""
+    import asyncio
+
+    # WMI 이름 목록과 OpenCV 인덱스를 병렬로 가져온다
+    wmi_task = asyncio.to_thread(_enumerate_cameras_wmi)
+    cv_task = asyncio.to_thread(_enumerate_cameras)
+    wmi_names, cv_devices = await asyncio.gather(wmi_task, cv_task)
+
+    # WMI 이름을 OpenCV 인덱스에 매핑 (순서 기반)
+    for i, dev in enumerate(cv_devices):
+        if i < len(wmi_names):
+            dev["name"] = wmi_names[i]["name"]
+
+    return {"devices": cv_devices}
+
+
 # ── 카메라 목록 ────────────────────────────────────────────────────────────
 
 @router.get("/list")

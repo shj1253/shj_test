@@ -46,6 +46,9 @@ export const api = {
     http.post('/camera/file', { path, loop }),
   cameraStatus: () => http.get('/camera/status'),
 
+  // Camera (장치 탐지)
+  detectDevices: () => http.get('/camera/devices'),
+
   // Camera (다중 카메라)
   listCameras: () => http.get('/camera/list'),
   startCameraById: (cameraId: string, deviceId = 0, fps = 30) =>

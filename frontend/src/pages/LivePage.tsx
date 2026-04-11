@@ -362,6 +362,8 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
   const [deviceId, setDeviceId] = useState(0)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
+  const [detectedDevices, setDetectedDevices] = useState<Array<{ device_id: number; name: string; resolution: string }>>([])
+  const [devicesLoading, setDevicesLoading] = useState(false)
   const filePickRef = useRef<HTMLInputElement>(null)
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -369,6 +371,22 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
   useEffect(() => {
     setDeviceId(sourceMode === 'external' ? 1 : 0)
   }, [sourceMode])
+
+  // 가이드 모달 열릴 때 장치 탐지
+  useEffect(() => {
+    if (!showCameraGuide) return
+    setDevicesLoading(true)
+    api.detectDevices()
+      .then(res => {
+        const devs = res.data?.devices ?? []
+        setDetectedDevices(devs)
+        // 내장(0)을 제외한 첫 번째 외장 장치를 자동 선택
+        const external = devs.find((d: { device_id: number }) => d.device_id > 0)
+        if (external) setDeviceId(external.device_id)
+      })
+      .catch(() => setDetectedDevices([]))
+      .finally(() => setDevicesLoading(false))
+  }, [showCameraGuide])
 
   // 스냅샷 폴링 — MJPEG img 대신 200ms마다 단일 JPEG fetch (브라우저 호환성 우수)
   const [snapUrl, setSnapUrl] = useState<string | null>(null)
@@ -910,20 +928,49 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
                             background: t.colors.bgInput, borderRadius: 6, border: `1px solid ${t.colors.border}` }}>
                   Canon: 메뉴 &gt; 연결 설정 &gt; USB &gt; UVC 모드 선택
                 </p>
-                {/* 장치 선택 */}
+                {/* 장치 선택 — 자동 탐지 */}
                 <div style={{ marginBottom: 16 }}>
-                  <p style={{ fontSize: 12, color: t.colors.textDim, marginBottom: 6, fontWeight: 600 }}>장치 번호</p>
-                  <div className="flex gap-2">
-                    {[1, 2, 3].map(id => (
-                      <button key={id} onClick={() => setDeviceId(id)} style={{
-                        flex: 1, padding: '6px 0', borderRadius: 8,
-                        border: `1px solid ${deviceId === id ? t.colors.success : t.colors.border}`,
-                        background: deviceId === id ? t.colors.success + '20' : 'transparent',
-                        color: deviceId === id ? t.colors.success : t.colors.textDim,
-                        fontSize: 12, fontWeight: deviceId === id ? 700 : 400, cursor: 'pointer',
-                      }}>외장 ({id})</button>
-                    ))}
+                  <div className="flex items-center gap-2 mb-2">
+                    <p style={{ fontSize: 12, color: t.colors.textDim, fontWeight: 600, margin: 0 }}>감지된 카메라</p>
+                    {devicesLoading && <span style={{ fontSize: 10, color: t.colors.textMuted }}>탐색 중...</span>}
+                    <button onClick={() => {
+                      setDevicesLoading(true)
+                      api.detectDevices()
+                        .then(res => { setDetectedDevices(res.data?.devices ?? []) })
+                        .catch(() => {})
+                        .finally(() => setDevicesLoading(false))
+                    }} style={{ fontSize: 10, color: t.colors.accent, background: 'none', border: 'none', cursor: 'pointer', marginLeft: 'auto' }}>
+                      <RefreshCw size={10} /> 새로고침
+                    </button>
                   </div>
+                  {detectedDevices.filter(d => d.device_id > 0).length > 0 ? (
+                    <div className="space-y-1">
+                      {detectedDevices.filter(d => d.device_id > 0).map(dev => (
+                        <button key={dev.device_id} onClick={() => setDeviceId(dev.device_id)}
+                          className="w-full flex items-center gap-2 rounded-lg"
+                          style={{
+                            padding: '8px 12px', textAlign: 'left',
+                            border: `1px solid ${deviceId === dev.device_id ? t.colors.success : t.colors.border}`,
+                            background: deviceId === dev.device_id ? t.colors.success + '15' : 'transparent',
+                            cursor: 'pointer',
+                          }}>
+                          <Camera size={14} style={{ color: deviceId === dev.device_id ? t.colors.success : t.colors.textDim, flexShrink: 0 }} />
+                          <div>
+                            <p style={{ fontSize: 12, fontWeight: 600, color: deviceId === dev.device_id ? t.colors.success : t.colors.text, margin: 0 }}>
+                              {dev.name}
+                            </p>
+                            <p style={{ fontSize: 10, color: t.colors.textMuted, margin: 0 }}>
+                              장치 {dev.device_id} / {dev.resolution}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : !devicesLoading ? (
+                    <p style={{ fontSize: 11, color: t.colors.textMuted, padding: '8px 0' }}>
+                      외장 카메라가 감지되지 않았습니다. 연결 후 새로고침하세요.
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => setGuideType('select')} style={{
@@ -931,10 +978,13 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
                     border: `1px solid ${t.colors.border}`, background: 'transparent',
                     color: t.colors.textDim, fontSize: 13, cursor: 'pointer',
                   }}>뒤로</button>
-                  <button onClick={() => { setShowCameraGuide(false); handleStart() }} style={{
+                  <button onClick={() => { setShowCameraGuide(false); handleStart() }}
+                    disabled={detectedDevices.filter(d => d.device_id > 0).length === 0}
+                    style={{
                     flex: 2, padding: '10px 0', borderRadius: 8, border: 'none',
                     background: t.colors.success, color: '#fff', fontSize: 13, fontWeight: 700,
                     cursor: 'pointer', boxShadow: `0 0 16px ${t.colors.success}50`,
+                    opacity: detectedDevices.filter(d => d.device_id > 0).length === 0 ? 0.5 : 1,
                   }}>연결 시작</button>
                 </div>
               </>
@@ -1021,20 +1071,49 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
                     </li>
                   ))}
                 </ol>
-                {/* 장치 선택 */}
+                {/* 장치 선택 — 자동 탐지 */}
                 <div style={{ marginBottom: 16 }}>
-                  <p style={{ fontSize: 12, color: t.colors.textDim, marginBottom: 6, fontWeight: 600 }}>장치 번호</p>
-                  <div className="flex gap-2">
-                    {[1, 2, 3].map(id => (
-                      <button key={id} onClick={() => setDeviceId(id)} style={{
-                        flex: 1, padding: '6px 0', borderRadius: 8,
-                        border: `1px solid ${deviceId === id ? t.colors.success : t.colors.border}`,
-                        background: deviceId === id ? t.colors.success + '20' : 'transparent',
-                        color: deviceId === id ? t.colors.success : t.colors.textDim,
-                        fontSize: 12, fontWeight: deviceId === id ? 700 : 400, cursor: 'pointer',
-                      }}>외장 ({id})</button>
-                    ))}
+                  <div className="flex items-center gap-2 mb-2">
+                    <p style={{ fontSize: 12, color: t.colors.textDim, fontWeight: 600, margin: 0 }}>감지된 카메라</p>
+                    {devicesLoading && <span style={{ fontSize: 10, color: t.colors.textMuted }}>탐색 중...</span>}
+                    <button onClick={() => {
+                      setDevicesLoading(true)
+                      api.detectDevices()
+                        .then(res => { setDetectedDevices(res.data?.devices ?? []) })
+                        .catch(() => {})
+                        .finally(() => setDevicesLoading(false))
+                    }} style={{ fontSize: 10, color: t.colors.accent, background: 'none', border: 'none', cursor: 'pointer', marginLeft: 'auto' }}>
+                      <RefreshCw size={10} /> 새로고침
+                    </button>
                   </div>
+                  {detectedDevices.filter(d => d.device_id > 0).length > 0 ? (
+                    <div className="space-y-1">
+                      {detectedDevices.filter(d => d.device_id > 0).map(dev => (
+                        <button key={dev.device_id} onClick={() => setDeviceId(dev.device_id)}
+                          className="w-full flex items-center gap-2 rounded-lg"
+                          style={{
+                            padding: '8px 12px', textAlign: 'left',
+                            border: `1px solid ${deviceId === dev.device_id ? t.colors.success : t.colors.border}`,
+                            background: deviceId === dev.device_id ? t.colors.success + '15' : 'transparent',
+                            cursor: 'pointer',
+                          }}>
+                          <Camera size={14} style={{ color: deviceId === dev.device_id ? t.colors.success : t.colors.textDim, flexShrink: 0 }} />
+                          <div>
+                            <p style={{ fontSize: 12, fontWeight: 600, color: deviceId === dev.device_id ? t.colors.success : t.colors.text, margin: 0 }}>
+                              {dev.name}
+                            </p>
+                            <p style={{ fontSize: 10, color: t.colors.textMuted, margin: 0 }}>
+                              장치 {dev.device_id} / {dev.resolution}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : !devicesLoading ? (
+                    <p style={{ fontSize: 11, color: t.colors.textMuted, padding: '8px 0' }}>
+                      외장 카메라가 감지되지 않았습니다. 연결 후 새로고침하세요.
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => setGuideType('phone_install')} style={{
@@ -1042,10 +1121,13 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
                     border: `1px solid ${t.colors.border}`, background: 'transparent',
                     color: t.colors.textDim, fontSize: 13, cursor: 'pointer',
                   }}>뒤로</button>
-                  <button onClick={() => { setShowCameraGuide(false); handleStart() }} style={{
+                  <button onClick={() => { setShowCameraGuide(false); handleStart() }}
+                    disabled={detectedDevices.filter(d => d.device_id > 0).length === 0}
+                    style={{
                     flex: 2, padding: '10px 0', borderRadius: 8, border: 'none',
                     background: t.colors.success, color: '#fff', fontSize: 13, fontWeight: 700,
                     cursor: 'pointer', boxShadow: `0 0 16px ${t.colors.success}50`,
+                    opacity: detectedDevices.filter(d => d.device_id > 0).length === 0 ? 0.5 : 1,
                   }}>연결 시작</button>
                 </div>
               </>
