@@ -150,12 +150,11 @@ class StreamManager:
 
                 self._frame_count += 1
 
-                # MJPEG용 JPEG 인코딩 — WS 클라이언트가 있을 때만
+                # MJPEG용 JPEG 인코딩 — 항상 수행 (snapshot 폴링에서도 사용)
                 stream_ch = f"stream_{self.camera_id}"
-                if ws_manager.connection_count(stream_ch) > 0:
-                    bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                    self.last_jpeg = jpeg_arr.tobytes()
+                bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                self.last_jpeg = jpeg_arr.tobytes()
 
                 # 추론 실행
                 result = await self.pipeline.run(frame)
