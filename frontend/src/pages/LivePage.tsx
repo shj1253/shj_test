@@ -358,7 +358,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
   const [wsReconnectIn, setWsReconnectIn] = useState<number | null>(null)
   const [startLoading, setStartLoading] = useState(false)
   const [showCameraGuide, setShowCameraGuide] = useState(false)
-  const [guideType, setGuideType] = useState<'select' | 'handycam' | 'phone'>('select')
+  const [guideType, setGuideType] = useState<'select' | 'handycam' | 'phone_install' | 'phone'>('select')
   const [deviceId, setDeviceId] = useState(0)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
@@ -825,7 +825,10 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
             <div className="flex items-center gap-2 mb-4">
               <Camera size={20} style={{ color: t.colors.success }} />
               <h2 style={{ fontSize: 16, fontWeight: 700, color: t.colors.text, margin: 0 }}>
-                {guideType === 'select' ? '외장 카메라 연결' : guideType === 'handycam' ? '핸디캠 연결 안내' : '스마트폰 연결 안내'}
+                {guideType === 'select' ? '외장 카메라 연결'
+                  : guideType === 'handycam' ? '핸디캠 연결 안내'
+                  : guideType === 'phone_install' ? '스마트폰 — 프로그램 설치'
+                  : '스마트폰 — 연결 방법'}
               </h2>
             </div>
 
@@ -853,7 +856,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
                     <ChevronRight size={16} style={{ color: t.colors.textDim, marginLeft: 'auto' }} />
                   </button>
                   <button
-                    onClick={() => setGuideType('phone')}
+                    onClick={() => setGuideType('phone_install')}
                     className="w-full flex items-center gap-3 rounded-lg"
                     style={{
                       padding: '14px 16px', textAlign: 'left',
@@ -937,16 +940,75 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
               </>
             )}
 
-            {/* ── 스마트폰 안내 ── */}
+            {/* ── 스마트폰: 설치 확인 ── */}
+            {guideType === 'phone_install' && (
+              <>
+                <p style={{ fontSize: 13, color: t.colors.text, marginBottom: 12, lineHeight: 1.6 }}>
+                  스마트폰을 웹캠으로 사용하려면 폰과 PC 양쪽에 프로그램 설치가 필요합니다.
+                </p>
+
+                <div style={{
+                  padding: '14px 16px', borderRadius: 8, marginBottom: 12,
+                  background: t.colors.bgInput, border: `1px solid ${t.colors.border}`,
+                }}>
+                  <p style={{ fontSize: 13, fontWeight: 700, color: t.colors.text, margin: '0 0 8px 0' }}>Android</p>
+                  <p style={{ fontSize: 12, color: t.colors.textDim, margin: '0 0 4px 0' }}>
+                    1. 폰에서 Google Play &gt; <strong style={{ color: t.colors.text }}>DroidCam</strong> 설치
+                  </p>
+                  <p style={{ fontSize: 12, color: t.colors.textDim, margin: 0 }}>
+                    2. PC에서 DroidCam Client 설치:
+                  </p>
+                  <a href="https://www.dev47apps.com/" target="_blank" rel="noopener noreferrer"
+                     style={{ fontSize: 12, color: t.colors.accent, display: 'inline-block', marginTop: 4 }}>
+                    dev47apps.com
+                  </a>
+                </div>
+
+                <div style={{
+                  padding: '14px 16px', borderRadius: 8, marginBottom: 20,
+                  background: t.colors.bgInput, border: `1px solid ${t.colors.border}`,
+                }}>
+                  <p style={{ fontSize: 13, fontWeight: 700, color: t.colors.text, margin: '0 0 8px 0' }}>iPhone</p>
+                  <p style={{ fontSize: 12, color: t.colors.textDim, margin: '0 0 4px 0' }}>
+                    1. 폰에서 App Store &gt; <strong style={{ color: t.colors.text }}>EpocCam</strong> 설치
+                  </p>
+                  <p style={{ fontSize: 12, color: t.colors.textDim, margin: 0 }}>
+                    2. PC에서 EpocCam 드라이버 설치:
+                  </p>
+                  <a href="https://www.elgato.com/s/epoccam" target="_blank" rel="noopener noreferrer"
+                     style={{ fontSize: 12, color: t.colors.accent, display: 'inline-block', marginTop: 4 }}>
+                    elgato.com/epoccam
+                  </a>
+                </div>
+
+                <p style={{ fontSize: 12, color: t.colors.text, marginBottom: 16, fontWeight: 600 }}>
+                  설치를 완료했으면 다음 단계로 진행하세요.
+                </p>
+
+                <div className="flex gap-2">
+                  <button onClick={() => setGuideType('select')} style={{
+                    flex: 1, padding: '10px 0', borderRadius: 8,
+                    border: `1px solid ${t.colors.border}`, background: 'transparent',
+                    color: t.colors.textDim, fontSize: 13, cursor: 'pointer',
+                  }}>뒤로</button>
+                  <button onClick={() => setGuideType('phone')} style={{
+                    flex: 2, padding: '10px 0', borderRadius: 8, border: 'none',
+                    background: t.colors.success, color: '#fff', fontSize: 13, fontWeight: 700,
+                    cursor: 'pointer', boxShadow: `0 0 16px ${t.colors.success}50`,
+                  }}>설치 완료, 다음 단계</button>
+                </div>
+              </>
+            )}
+
+            {/* ── 스마트폰: 연결 안내 ── */}
             {guideType === 'phone' && (
               <>
                 <ol className="space-y-3 mb-5">
                   {[
-                    { step: '1', text: '폰에 DroidCam (Android) 또는 EpocCam (iPhone) 앱을 설치하세요.' },
-                    { step: '2', text: 'PC에도 해당 클라이언트 프로그램을 설치하세요.' },
-                    { step: '3', text: 'USB 케이블로 폰을 노트북에 연결하세요.' },
-                    { step: '4', text: '앱을 실행하고 USB 모드를 선택하세요.' },
-                    { step: '5', text: 'PC 클라이언트에서 연결 확인 후 아래 버튼을 누르세요.' },
+                    { step: '1', text: 'USB 케이블로 폰을 노트북에 연결하세요.' },
+                    { step: '2', text: '폰에서 DroidCam / EpocCam 앱을 실행하세요.' },
+                    { step: '3', text: '앱에서 USB 모드를 선택하세요.' },
+                    { step: '4', text: 'PC 클라이언트가 폰 카메라를 인식하면 아래 버튼을 누르세요.' },
                   ].map(({ step, text }) => (
                     <li key={step} className="flex items-start gap-3">
                       <span style={{
@@ -959,13 +1021,6 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
                     </li>
                   ))}
                 </ol>
-                <div style={{ marginBottom: 12, padding: '8px 10px',
-                              background: t.colors.bgInput, borderRadius: 6, border: `1px solid ${t.colors.border}` }}>
-                  <p style={{ fontSize: 11, color: t.colors.textMuted, lineHeight: 1.5, margin: 0 }}>
-                    <strong style={{ color: t.colors.text }}>Android</strong> — DroidCam 앱 + DroidCam Client (PC)<br/>
-                    <strong style={{ color: t.colors.text }}>iPhone</strong> — EpocCam 앱 + EpocCam 드라이버 (PC)
-                  </p>
-                </div>
                 {/* 장치 선택 */}
                 <div style={{ marginBottom: 16 }}>
                   <p style={{ fontSize: 12, color: t.colors.textDim, marginBottom: 6, fontWeight: 600 }}>장치 번호</p>
@@ -982,7 +1037,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setGuideType('select')} style={{
+                  <button onClick={() => setGuideType('phone_install')} style={{
                     flex: 1, padding: '10px 0', borderRadius: 8,
                     border: `1px solid ${t.colors.border}`, background: 'transparent',
                     color: t.colors.textDim, fontSize: 13, cursor: 'pointer',
