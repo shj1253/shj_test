@@ -93,3 +93,47 @@ export function useWebSocket(channel: string, onMessage: MessageHandler, onStatu
 
   return { send }
 }
+
+/**
+ * 바이너리 WebSocket 훅 — JPEG 프레임 수신용
+ * onFrame: Blob을 받아서 처리
+ */
+type FrameHandler = (blob: Blob) => void
+
+export function useWebSocketBinary(channel: string, onFrame: FrameHandler) {
+  const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mounted = useRef(true)
+  const onFrameRef = useRef(onFrame)
+  onFrameRef.current = onFrame
+
+  const connect = useCallback(() => {
+    if (!mounted.current) return
+
+    const ws = new WebSocket(`${WS_BASE}/ws/${channel}`)
+    ws.binaryType = 'blob'
+    wsRef.current = ws
+
+    ws.onmessage = (event) => {
+      if (event.data instanceof Blob) {
+        onFrameRef.current(event.data)
+      }
+    }
+
+    ws.onclose = () => {
+      if (mounted.current) {
+        reconnectTimer.current = setTimeout(() => connect(), 2000)
+      }
+    }
+  }, [channel])
+
+  useEffect(() => {
+    mounted.current = true
+    connect()
+    return () => {
+      mounted.current = false
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+      wsRef.current?.close()
+    }
+  }, [connect])
+}

@@ -171,8 +171,14 @@ class StreamManager:
                 # ── 디스플레이: JPEG 인코딩 즉시 수행 (원본 해상도) ──
                 bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 _, jpeg_arr = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                self.last_jpeg = jpeg_arr.tobytes()
+                jpeg_bytes = jpeg_arr.tobytes()
+                self.last_jpeg = jpeg_bytes
                 self._frame_seq += 1
+
+                # WS 바이너리로 JPEG push (프론트 폴링 대체)
+                feed_ch = f"feed_{self.camera_id}"
+                if ws_manager.connection_count(feed_ch) > 0:
+                    await ws_manager.broadcast_bytes(feed_ch, jpeg_bytes)
 
                 # ── 추론: 이전 추론이 끝났으면 새 프레임으로 시작 ──
                 if not self._inference_busy:

@@ -4,7 +4,7 @@ import {
   AlertTriangle, Info, CheckCircle2, XCircle, Camera, ChevronDown, ChevronRight,
   WifiOff, RefreshCw, FileVideo, CheckCheck, Filter, Volume2, VolumeX, Wifi, BrainCircuit
 } from 'lucide-react'
-import { useWebSocket } from '../api/wsClient'
+import { useWebSocket, useWebSocketBinary } from '../api/wsClient'
 import { useMetricsStore, useNotifStore, pushApiError } from '../store'
 import { api } from '../api/httpClient'
 import { useTheme } from '../hooks/useTheme'
@@ -388,32 +388,25 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
       .finally(() => setDevicesLoading(false))
   }, [showCameraGuide])
 
-  // 스냅샷 폴링 — 프레임 시퀀스 기반 중복 방지
+  // WS 바이너리로 JPEG 프레임 수신 (HTTP 폴링 대체 — 지연 최소화)
   const [snapUrl, setSnapUrl] = useState<string | null>(null)
   const snapBlobRef = useRef<string | null>(null)
-  const lastSeqRef = useRef<string>('')
+
+  const handleFrame = useCallback((blob: Blob) => {
+    if (!isStreaming || !showFeed) return
+    const url = URL.createObjectURL(blob)
+    setSnapUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+    snapBlobRef.current = url
+  }, [isStreaming, showFeed])
+
+  useWebSocketBinary(`feed/${cameraId}`, handleFrame)
+
+  // 스트리밍 중지 시 스냅샷 정리
   useEffect(() => {
-    if (!isStreaming || !showFeed) { setSnapUrl(null); lastSeqRef.current = ''; return }
-    let polling = true
-    const poll = async () => {
-      if (!polling) return
-      try {
-        const res = await fetch(`${BASE_URL}/camera/${cameraId}/snapshot?t=${Date.now()}`)
-        if (!res.ok) return
-        // 동일 프레임이면 렌더링 건너뛰기
-        const seq = res.headers.get('X-Frame-Seq') ?? ''
-        if (seq && seq === lastSeqRef.current) return
-        lastSeqRef.current = seq
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        setSnapUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
-        snapBlobRef.current = url
-      } catch { /* 스트림 아직 준비 중 */ }
+    if (!isStreaming || !showFeed) {
+      setSnapUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
     }
-    poll()
-    const iv = setInterval(poll, 80)
-    return () => { polling = false; clearInterval(iv); if (snapBlobRef.current) URL.revokeObjectURL(snapBlobRef.current) }
-  }, [isStreaming, showFeed, cameraId])
+  }, [isStreaming, showFeed])
 
   // C-2 fix: 컴포넌트 언마운트 시 타이머 정리 → 언마운트 후 setState 오류 방지
   useEffect(() => () => {

@@ -257,6 +257,20 @@ async def generic_exception_handler(request, exc: Exception):
 
 # ── WebSocket 엔드포인트 ──────────────────────────────────────────────────
 
+@app.websocket("/ws/feed/{camera_id}")
+async def ws_feed_camera(websocket: WebSocket, camera_id: str):
+    """카메라별 JPEG 바이너리 프레임 스트림 (디스플레이용)"""
+    channel = f"feed_{camera_id}"
+    await ws_manager.connect(websocket, channel)
+    try:
+        while True:
+            await websocket.receive_text()
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        ws_manager.disconnect(websocket, channel)
+
+
 @app.websocket("/ws/stream/{camera_id}")
 async def ws_stream_camera(websocket: WebSocket, camera_id: str):
     """카메라별 실시간 추론 결과 스트림"""

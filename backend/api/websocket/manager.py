@@ -66,11 +66,33 @@ class ConnectionManager:
         for ws in dead:
             self._connections[channel].discard(ws)
 
+    async def broadcast_bytes(self, channel: str, data: bytes) -> None:
+        """특정 채널 구독자 전체에게 바이너리 메시지 전송 (JPEG 프레임 등)"""
+        connections = list(self._connections.get(channel, set()))
+        if not connections:
+            return
+
+        dead: list[WebSocket] = []
+        await asyncio.gather(
+            *[self._safe_send_bytes(ws, data, dead) for ws in connections],
+            return_exceptions=True,
+        )
+        for ws in dead:
+            self._connections[channel].discard(ws)
+
     async def _safe_send(
         self, ws: WebSocket, message: str, dead: list[WebSocket]
     ) -> None:
         try:
             await ws.send_text(message)
+        except Exception:
+            dead.append(ws)
+
+    async def _safe_send_bytes(
+        self, ws: WebSocket, data: bytes, dead: list[WebSocket]
+    ) -> None:
+        try:
+            await ws.send_bytes(data)
         except Exception:
             dead.append(ws)
 
