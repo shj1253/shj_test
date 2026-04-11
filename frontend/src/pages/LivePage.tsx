@@ -358,6 +358,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
   const [wsReconnectIn, setWsReconnectIn] = useState<number | null>(null)
   const [startLoading, setStartLoading] = useState(false)
   const [showCameraGuide, setShowCameraGuide] = useState(false)
+  const [guideType, setGuideType] = useState<'select' | 'handycam' | 'phone'>('select')
   const [deviceId, setDeviceId] = useState(0)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
@@ -641,7 +642,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
                 {sourceMode === 'builtin' ? '노트북 내장 웹캠으로 감시를 시작합니다' : '아래 버튼을 눌러 감시를 시작하세요'}
               </p>
               <button
-                onClick={() => sourceMode === 'builtin' ? handleStart() : setShowCameraGuide(true)}
+                onClick={() => { if (sourceMode === 'builtin') { handleStart() } else { setGuideType('select'); setShowCameraGuide(true) } }}
                 disabled={startLoading}
                 className="flex items-center gap-2 rounded-lg"
                 style={{
@@ -820,106 +821,180 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
               boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
             }}
           >
+            {/* 가이드 헤더 */}
             <div className="flex items-center gap-2 mb-4">
               <Camera size={20} style={{ color: t.colors.success }} />
               <h2 style={{ fontSize: 16, fontWeight: 700, color: t.colors.text, margin: 0 }}>
-                카메라 연결 안내
+                {guideType === 'select' ? '외장 카메라 연결' : guideType === 'handycam' ? '핸디캠 연결 안내' : '스마트폰 연결 안내'}
               </h2>
             </div>
-            <ol className="space-y-3 mb-6">
-              {[
-                { step: '1', text: 'USB 케이블로 카메라(또는 핸드캠)를 노트북에 연결하세요.' },
-                { step: '2', text: '카메라 전원을 켜고, PC 연결 모드(UVC / 웹캠 모드)로 설정하세요.' },
-                { step: '3', text: 'Windows에서 드라이버 설치 알림이 뜨면 완료될 때까지 기다리세요.' },
-                { step: '4', text: '연결이 완료되면 아래 [계속하기]를 눌러 감시를 시작하세요.' },
-              ].map(({ step, text }) => (
-                <li key={step} className="flex items-start gap-3">
-                  <span style={{
-                    background: t.colors.success,
-                    color: '#fff',
-                    borderRadius: '50%',
-                    width: 22,
-                    height: 22,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
-                    marginTop: 1,
-                  }}>{step}</span>
-                  <span style={{ fontSize: 13, color: t.colors.text, lineHeight: 1.5 }}>{text}</span>
-                </li>
-              ))}
-            </ol>
-            <div style={{ marginBottom: 16 }}>
-              <p style={{ fontSize: 12, color: t.colors.textDim, marginBottom: 6, fontWeight: 600 }}>
-                외장 카메라 장치 선택
-              </p>
-              <div className="flex gap-2">
-                {[1, 2, 3].map(id => (
+
+            {/* ── 기기 선택 화면 ── */}
+            {guideType === 'select' && (
+              <>
+                <p style={{ fontSize: 13, color: t.colors.text, marginBottom: 16 }}>
+                  어떤 장치를 연결하시겠습니까?
+                </p>
+                <div className="space-y-2 mb-6">
                   <button
-                    key={id}
-                    onClick={() => setDeviceId(id)}
+                    onClick={() => setGuideType('handycam')}
+                    className="w-full flex items-center gap-3 rounded-lg"
                     style={{
-                      flex: 1,
-                      padding: '6px 0',
-                      borderRadius: 8,
-                      border: `1px solid ${deviceId === id ? t.colors.success : t.colors.border}`,
-                      background: deviceId === id ? t.colors.success + '20' : 'transparent',
-                      color: deviceId === id ? t.colors.success : t.colors.textDim,
-                      fontSize: 12,
-                      fontWeight: deviceId === id ? 700 : 400,
+                      padding: '14px 16px', textAlign: 'left',
+                      background: t.colors.bgInput,
+                      border: `1px solid ${t.colors.border}`,
                       cursor: 'pointer',
-                    }}
-                  >
-                    외장 ({id})
+                    }}>
+                    <Video size={22} style={{ color: t.colors.accent, flexShrink: 0 }} />
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: t.colors.text, margin: 0 }}>핸디캠 / 캠코더</p>
+                      <p style={{ fontSize: 11, color: t.colors.textDim, margin: 0 }}>Canon 등 USB-UVC 지원 카메라</p>
+                    </div>
+                    <ChevronRight size={16} style={{ color: t.colors.textDim, marginLeft: 'auto' }} />
                   </button>
-                ))}
-              </div>
-              <p style={{ fontSize: 10, color: t.colors.textMuted, marginTop: 6 }}>
-                USB 카메라가 여러 대면 번호를 다르게 지정하세요
-              </p>
-            </div>
-            <p style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
-              Canon 핸드캠: 메뉴 &gt; 연결 설정 &gt; USB &gt; UVC 모드<br/>
-              Android 폰: DroidCam 앱 설치 후 USB 모드로 연결<br/>
-              iPhone: EpocCam 앱 설치 후 USB 케이블 연결
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowCameraGuide(false)}
-                style={{
-                  flex: 1,
-                  padding: '10px 0',
-                  borderRadius: 8,
-                  border: `1px solid ${t.colors.border}`,
-                  background: 'transparent',
-                  color: t.colors.textDim,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                취소
-              </button>
-              <button
-                onClick={() => { setShowCameraGuide(false); handleStart() }}
-                style={{
-                  flex: 2,
-                  padding: '10px 0',
-                  borderRadius: 8,
-                  border: 'none',
-                  background: t.colors.success,
-                  color: '#fff',
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  boxShadow: `0 0 16px ${t.colors.success}50`,
-                }}
-              >
-                계속하기
-              </button>
-            </div>
+                  <button
+                    onClick={() => setGuideType('phone')}
+                    className="w-full flex items-center gap-3 rounded-lg"
+                    style={{
+                      padding: '14px 16px', textAlign: 'left',
+                      background: t.colors.bgInput,
+                      border: `1px solid ${t.colors.border}`,
+                      cursor: 'pointer',
+                    }}>
+                    <Camera size={22} style={{ color: t.colors.accent, flexShrink: 0 }} />
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: t.colors.text, margin: 0 }}>스마트폰</p>
+                      <p style={{ fontSize: 11, color: t.colors.textDim, margin: 0 }}>Android / iPhone USB 유선 연결</p>
+                    </div>
+                    <ChevronRight size={16} style={{ color: t.colors.textDim, marginLeft: 'auto' }} />
+                  </button>
+                </div>
+                <button
+                  onClick={() => setShowCameraGuide(false)}
+                  style={{
+                    width: '100%', padding: '10px 0', borderRadius: 8,
+                    border: `1px solid ${t.colors.border}`,
+                    background: 'transparent', color: t.colors.textDim,
+                    fontSize: 13, cursor: 'pointer',
+                  }}>
+                  취소
+                </button>
+              </>
+            )}
+
+            {/* ── 핸디캠 안내 ── */}
+            {guideType === 'handycam' && (
+              <>
+                <ol className="space-y-3 mb-5">
+                  {[
+                    { step: '1', text: 'USB 케이블로 핸디캠을 노트북에 연결하세요.' },
+                    { step: '2', text: '핸디캠 전원을 켜세요.' },
+                    { step: '3', text: 'PC 연결 모드(UVC / 웹캠 모드)로 설정하세요.' },
+                    { step: '4', text: 'Windows에서 드라이버 설치 알림이 뜨면 완료될 때까지 기다리세요.' },
+                  ].map(({ step, text }) => (
+                    <li key={step} className="flex items-start gap-3">
+                      <span style={{
+                        background: t.colors.success, color: '#fff', borderRadius: '50%',
+                        width: 22, height: 22, fontSize: 12, fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0, marginTop: 1,
+                      }}>{step}</span>
+                      <span style={{ fontSize: 13, color: t.colors.text, lineHeight: 1.5 }}>{text}</span>
+                    </li>
+                  ))}
+                </ol>
+                <p style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 12, lineHeight: 1.5, padding: '8px 10px',
+                            background: t.colors.bgInput, borderRadius: 6, border: `1px solid ${t.colors.border}` }}>
+                  Canon: 메뉴 &gt; 연결 설정 &gt; USB &gt; UVC 모드 선택
+                </p>
+                {/* 장치 선택 */}
+                <div style={{ marginBottom: 16 }}>
+                  <p style={{ fontSize: 12, color: t.colors.textDim, marginBottom: 6, fontWeight: 600 }}>장치 번호</p>
+                  <div className="flex gap-2">
+                    {[1, 2, 3].map(id => (
+                      <button key={id} onClick={() => setDeviceId(id)} style={{
+                        flex: 1, padding: '6px 0', borderRadius: 8,
+                        border: `1px solid ${deviceId === id ? t.colors.success : t.colors.border}`,
+                        background: deviceId === id ? t.colors.success + '20' : 'transparent',
+                        color: deviceId === id ? t.colors.success : t.colors.textDim,
+                        fontSize: 12, fontWeight: deviceId === id ? 700 : 400, cursor: 'pointer',
+                      }}>외장 ({id})</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setGuideType('select')} style={{
+                    flex: 1, padding: '10px 0', borderRadius: 8,
+                    border: `1px solid ${t.colors.border}`, background: 'transparent',
+                    color: t.colors.textDim, fontSize: 13, cursor: 'pointer',
+                  }}>뒤로</button>
+                  <button onClick={() => { setShowCameraGuide(false); handleStart() }} style={{
+                    flex: 2, padding: '10px 0', borderRadius: 8, border: 'none',
+                    background: t.colors.success, color: '#fff', fontSize: 13, fontWeight: 700,
+                    cursor: 'pointer', boxShadow: `0 0 16px ${t.colors.success}50`,
+                  }}>연결 시작</button>
+                </div>
+              </>
+            )}
+
+            {/* ── 스마트폰 안내 ── */}
+            {guideType === 'phone' && (
+              <>
+                <ol className="space-y-3 mb-5">
+                  {[
+                    { step: '1', text: '폰에 DroidCam (Android) 또는 EpocCam (iPhone) 앱을 설치하세요.' },
+                    { step: '2', text: 'PC에도 해당 클라이언트 프로그램을 설치하세요.' },
+                    { step: '3', text: 'USB 케이블로 폰을 노트북에 연결하세요.' },
+                    { step: '4', text: '앱을 실행하고 USB 모드를 선택하세요.' },
+                    { step: '5', text: 'PC 클라이언트에서 연결 확인 후 아래 버튼을 누르세요.' },
+                  ].map(({ step, text }) => (
+                    <li key={step} className="flex items-start gap-3">
+                      <span style={{
+                        background: t.colors.accent, color: '#fff', borderRadius: '50%',
+                        width: 22, height: 22, fontSize: 12, fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0, marginTop: 1,
+                      }}>{step}</span>
+                      <span style={{ fontSize: 13, color: t.colors.text, lineHeight: 1.5 }}>{text}</span>
+                    </li>
+                  ))}
+                </ol>
+                <div style={{ marginBottom: 12, padding: '8px 10px',
+                              background: t.colors.bgInput, borderRadius: 6, border: `1px solid ${t.colors.border}` }}>
+                  <p style={{ fontSize: 11, color: t.colors.textMuted, lineHeight: 1.5, margin: 0 }}>
+                    <strong style={{ color: t.colors.text }}>Android</strong> — DroidCam 앱 + DroidCam Client (PC)<br/>
+                    <strong style={{ color: t.colors.text }}>iPhone</strong> — EpocCam 앱 + EpocCam 드라이버 (PC)
+                  </p>
+                </div>
+                {/* 장치 선택 */}
+                <div style={{ marginBottom: 16 }}>
+                  <p style={{ fontSize: 12, color: t.colors.textDim, marginBottom: 6, fontWeight: 600 }}>장치 번호</p>
+                  <div className="flex gap-2">
+                    {[1, 2, 3].map(id => (
+                      <button key={id} onClick={() => setDeviceId(id)} style={{
+                        flex: 1, padding: '6px 0', borderRadius: 8,
+                        border: `1px solid ${deviceId === id ? t.colors.success : t.colors.border}`,
+                        background: deviceId === id ? t.colors.success + '20' : 'transparent',
+                        color: deviceId === id ? t.colors.success : t.colors.textDim,
+                        fontSize: 12, fontWeight: deviceId === id ? 700 : 400, cursor: 'pointer',
+                      }}>외장 ({id})</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setGuideType('select')} style={{
+                    flex: 1, padding: '10px 0', borderRadius: 8,
+                    border: `1px solid ${t.colors.border}`, background: 'transparent',
+                    color: t.colors.textDim, fontSize: 13, cursor: 'pointer',
+                  }}>뒤로</button>
+                  <button onClick={() => { setShowCameraGuide(false); handleStart() }} style={{
+                    flex: 2, padding: '10px 0', borderRadius: 8, border: 'none',
+                    background: t.colors.success, color: '#fff', fontSize: 13, fontWeight: 700,
+                    cursor: 'pointer', boxShadow: `0 0 16px ${t.colors.success}50`,
+                  }}>연결 시작</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
