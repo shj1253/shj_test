@@ -355,6 +355,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   const [wsOnline, setWsOnline] = useState(false)
   const [wsReconnectIn, setWsReconnectIn] = useState<number | null>(null)
   const [startLoading, setStartLoading] = useState(false)
+  const [showCameraGuide, setShowCameraGuide] = useState(false)
   const [showFileInput, setShowFileInput] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
@@ -668,7 +669,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
                 아래 버튼을 눌러 감시를 시작하세요
               </p>
               <button
-                onClick={handleStart}
+                onClick={() => setShowCameraGuide(true)}
                 disabled={startLoading}
                 className="flex items-center gap-2 rounded-lg"
                 style={{
@@ -984,6 +985,100 @@ export default function LivePage() {
           </div>
         ))}
       </div>
+
+      {/* 카메라 연결 가이드 모달 */}
+      {showCameraGuide && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.7)' }}
+          onClick={() => setShowCameraGuide(false)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: t.colors.surface,
+              border: `1px solid ${t.colors.border}`,
+              borderRadius: 16,
+              padding: '28px 32px',
+              width: 380,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            }}
+          >
+            <div className="flex items-center gap-2 mb-4">
+              <Camera size={20} style={{ color: t.colors.success }} />
+              <h2 style={{ fontSize: 16, fontWeight: 700, color: t.colors.text, margin: 0 }}>
+                카메라 연결 안내
+              </h2>
+            </div>
+            <ol className="space-y-3 mb-6">
+              {[
+                { step: '1', text: 'USB 케이블로 카메라(또는 핸드캠)를 노트북에 연결하세요.' },
+                { step: '2', text: '카메라 전원을 켜고, PC 연결 모드(UVC / 웹캠 모드)로 설정하세요.' },
+                { step: '3', text: 'Windows에서 드라이버 설치 알림이 뜨면 완료될 때까지 기다리세요.' },
+                { step: '4', text: '연결이 완료되면 아래 [계속하기]를 눌러 감시를 시작하세요.' },
+              ].map(({ step, text }) => (
+                <li key={step} className="flex items-start gap-3">
+                  <span style={{
+                    background: t.colors.success,
+                    color: '#fff',
+                    borderRadius: '50%',
+                    width: 22,
+                    height: 22,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                    marginTop: 1,
+                  }}>{step}</span>
+                  <span style={{ fontSize: 13, color: t.colors.text, lineHeight: 1.5 }}>{text}</span>
+                </li>
+              ))}
+            </ol>
+            <p style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
+              💡 Canon 핸드캠은 메뉴 → 연결 설정 → USB → UVC 모드를 선택하세요.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowCameraGuide(false)}
+                style={{
+                  flex: 1,
+                  padding: '10px 0',
+                  borderRadius: 8,
+                  border: `1px solid ${t.colors.border}`,
+                  background: 'transparent',
+                  color: t.colors.textDim,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  setShowCameraGuide(false)
+                  handleStart()
+                }}
+                style={{
+                  flex: 2,
+                  padding: '10px 0',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: t.colors.success,
+                  color: '#fff',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: `0 0 16px ${t.colors.success}50`,
+                }}
+              >
+                계속하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="h-full flex flex-col">
         {/* 시스템 상태 헤더 */}
