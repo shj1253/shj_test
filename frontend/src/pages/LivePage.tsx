@@ -356,6 +356,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   const [wsReconnectIn, setWsReconnectIn] = useState<number | null>(null)
   const [startLoading, setStartLoading] = useState(false)
   const [showCameraGuide, setShowCameraGuide] = useState(false)
+  const [deviceId, setDeviceId] = useState(0)
   const [showFileInput, setShowFileInput] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
@@ -380,7 +381,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
       } catch { /* 스트림 아직 준비 중 */ }
     }
     poll()
-    const iv = setInterval(poll, 200)
+    const iv = setInterval(poll, 100)
     return () => { clearInterval(iv); if (snapBlobRef.current) URL.revokeObjectURL(snapBlobRef.current) }
   }, [isStreaming, showFeed, cameraId])
 
@@ -423,7 +424,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
     setStartLoading(true)
     try {
       setError(null)
-      await api.startCameraById(cameraId, parseInt(cameraId) || 0)
+      await api.startCameraById(cameraId, deviceId)
       setIsStreaming(true)
       setShowFileInput(false)
 
@@ -879,6 +880,35 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
                 </li>
               ))}
             </ol>
+            <div style={{ marginBottom: 16 }}>
+              <p style={{ fontSize: 12, color: t.colors.textDim, marginBottom: 6, fontWeight: 600 }}>
+                카메라 장치 선택
+              </p>
+              <div className="flex gap-2">
+                {[0, 1, 2].map(id => (
+                  <button
+                    key={id}
+                    onClick={() => setDeviceId(id)}
+                    style={{
+                      flex: 1,
+                      padding: '6px 0',
+                      borderRadius: 8,
+                      border: `1px solid ${deviceId === id ? t.colors.success : t.colors.border}`,
+                      background: deviceId === id ? t.colors.success + '20' : 'transparent',
+                      color: deviceId === id ? t.colors.success : t.colors.textDim,
+                      fontSize: 12,
+                      fontWeight: deviceId === id ? 700 : 400,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {id === 0 ? '내장 (0)' : `외장 (${id})`}
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize: 10, color: t.colors.textMuted, marginTop: 6 }}>
+                USB 카메라는 보통 외장 (1) 또는 (2)
+              </p>
+            </div>
             <p style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
               💡 Canon 핸드캠은 메뉴 → 연결 설정 → USB → UVC 모드를 선택하세요.
             </p>
