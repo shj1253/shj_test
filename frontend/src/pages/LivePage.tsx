@@ -363,8 +363,6 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
   const [uploadPct, setUploadPct] = useState(0)
   const filePickRef = useRef<HTMLInputElement>(null)
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [rtspUrl, setRtspUrl] = useState('')
-  const [showRtsp, setShowRtsp] = useState(false)
 
   // 소스 모드 변경 시 deviceId 기본값 조정
   useEffect(() => {
@@ -566,7 +564,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
           </div>
           {error.hint && (
             <p style={{ fontSize: 10, color: t.colors.textMuted, paddingLeft: 18, lineHeight: 1.4 }}>
-              💡 {error.hint}
+              TIP: {error.hint}
             </p>
           )}
           <button
@@ -628,48 +626,6 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
                 <FileVideo size={16} />
                 {uploading ? (uploadPct < 100 ? `업로드 중... ${uploadPct}%` : '처리 중...') : '파일 선택'}
               </button>
-              {/* RTSP / IP 카메라 */}
-              <div>
-                <button
-                  onClick={() => setShowRtsp(v => !v)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6, margin: '0 auto',
-                    background: 'transparent', color: 'rgba(255,255,255,0.45)',
-                    fontSize: 11, padding: '6px 12px',
-                    borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)',
-                    cursor: 'pointer',
-                  }}>
-                  📱 IP 카메라 / RTSP
-                </button>
-                {showRtsp && (
-                  <div className="flex gap-1 mt-2">
-                    <input
-                      value={rtspUrl}
-                      onChange={e => setRtspUrl(e.target.value)}
-                      placeholder="rtsp://192.168.x.x:포트"
-                      style={{ ...t.input, flex: 1, fontSize: 10 }}
-                    />
-                    <button
-                      onClick={async () => {
-                        if (!rtspUrl.trim()) return
-                        setStartLoading(true)
-                        try {
-                          await api.startRtsp(cameraId, rtspUrl.trim())
-                          setIsStreaming(true)
-                          setShowRtsp(false)
-                        } catch (err: unknown) {
-                          const msg = (err as any)?.response?.data?.detail ?? '연결 실패'
-                          setError({ msg, hint: 'IP 카메라 앱의 주소를 확인하세요' })
-                        } finally { setStartLoading(false) }
-                      }}
-                      disabled={startLoading || !rtspUrl.trim()}
-                      style={{ ...t.btnPrimary, padding: '2px 8px', fontSize: 10 }}
-                    >
-                      연결
-                    </button>
-                  </div>
-                )}
-              </div>
               <p style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)' }}>CAM {cameraId}</p>
             </div>
           </div>
@@ -926,7 +882,9 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external
               </p>
             </div>
             <p style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
-              💡 Canon 핸드캠은 메뉴 → 연결 설정 → USB → UVC 모드를 선택하세요.
+              Canon 핸드캠: 메뉴 &gt; 연결 설정 &gt; USB &gt; UVC 모드<br/>
+              Android 폰: DroidCam 앱 설치 후 USB 모드로 연결<br/>
+              iPhone: EpocCam 앱 설치 후 USB 케이블 연결
             </p>
             <div className="flex gap-2">
               <button
@@ -987,7 +945,7 @@ function AppNotifBanner({ t }: { t: ReturnType<typeof useTheme> }) {
       <div className="flex-1 min-w-0">
         <span style={{ fontSize: 11, color: t.colors.text }}>{latest.message}</span>
         {latest.hint && (
-          <p style={{ fontSize: 10, color: t.colors.textDim, marginTop: 1 }}>💡 {latest.hint}</p>
+          <p style={{ fontSize: 10, color: t.colors.textDim, marginTop: 1 }}>TIP: {latest.hint}</p>
         )}
       </div>
       {latest.retryFn && (
@@ -1174,10 +1132,10 @@ export default function LivePage() {
              style={{ background: t.colors.bgPanel, borderBottom: `1px solid ${t.colors.border}` }}>
           <span style={{ fontSize: 10, color: t.colors.textDim, marginRight: 4 }}>소스 모드</span>
           {([
-            { mode: 'builtin' as SourceMode, label: '내장 카메라', icon: '🖥️' },
-            { mode: 'external' as SourceMode, label: '외장 카메라', icon: '📷' },
-            { mode: 'file' as SourceMode, label: '파일 재생', icon: '🎬' },
-          ]).map(({ mode, label, icon }) => (
+            { mode: 'builtin' as SourceMode, label: '내장 카메라' },
+            { mode: 'external' as SourceMode, label: '외장 카메라' },
+            { mode: 'file' as SourceMode, label: '파일 재생' },
+          ]).map(({ mode, label }) => (
             <button
               key={mode}
               onClick={() => handleModeChange(mode)}
@@ -1191,7 +1149,7 @@ export default function LivePage() {
                 cursor: 'pointer',
               }}
             >
-              {icon} {label}
+              {label}
             </button>
           ))}
         </div>
