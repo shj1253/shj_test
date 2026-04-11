@@ -75,6 +75,7 @@ const SEVERITY_ICON: Record<AlertSeverity, typeof AlertTriangle> = {
 }
 
 type SeverityFilter = 'all' | AlertSeverity
+type SourceMode = 'builtin' | 'external' | 'file'
 
 function severityLabel(s: AlertSeverity) {
   return { error: '오류', warning: '경고', info: '정보', success: '정상' }[s]
@@ -340,11 +341,12 @@ function AlertToast({ alert, onDismiss, onAck, t }: {
 
 // ── 카메라 셀 ──────────────────────────────────────────────────────────────
 
-function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
+function CameraCell({ cameraId, onAlert, soundEnabled, t, sourceMode = 'external' }: {
   cameraId: string
   onAlert: (alert: DetectionAlert) => void
   soundEnabled: boolean
   t: ReturnType<typeof useTheme>
+  sourceMode?: SourceMode
 }) {
   const { push: pushNotif } = useNotifStore()
   const [lastResult, setLastResult] = useState<InferenceResult | null>(null)
@@ -357,13 +359,17 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
   const [startLoading, setStartLoading] = useState(false)
   const [showCameraGuide, setShowCameraGuide] = useState(false)
   const [deviceId, setDeviceId] = useState(0)
-  const [showFileInput, setShowFileInput] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const filePickRef = useRef<HTMLInputElement>(null)
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [rtspUrl, setRtspUrl] = useState('')
   const [showRtsp, setShowRtsp] = useState(false)
+
+  // 소스 모드 변경 시 deviceId 기본값 조정
+  useEffect(() => {
+    setDeviceId(sourceMode === 'external' ? 1 : 0)
+  }, [sourceMode])
 
   // 스냅샷 폴링 — MJPEG img 대신 200ms마다 단일 JPEG fetch (브라우저 호환성 우수)
   const [snapUrl, setSnapUrl] = useState<string | null>(null)
@@ -426,7 +432,6 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
       setError(null)
       await api.startCameraById(cameraId, deviceId)
       setIsStreaming(true)
-      setShowFileInput(false)
 
     } catch (err: unknown) {
       const anyErr = err as any
@@ -451,7 +456,6 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
       form.append('loop', 'true')
       await api.uploadAndStartFile(cameraId, form, (pct) => setUploadPct(pct))
       setIsStreaming(true)
-      setShowFileInput(false)
 
     } catch (err: unknown) {
       const anyErr = err as any
@@ -538,79 +542,18 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
                 {showFeed ? <VideoOff size={9} /> : <Video size={9} />}
               </button>
             </>
-          ) : (
-            <button onClick={() => setShowFileInput(v => !v)} title="파일 소스로 시작"
-                    style={{ ...t.btnSecondary, padding: '1px 5px', fontSize: 10 }}>
-              <FileVideo size={9} /> 파일
-            </button>
-          )}
+          ) : null}
         </div>
       </div>
 
-      {/* 파일 소스 선택 */}
-      {showFileInput && (
-        <div className="flex items-center gap-1.5 px-2 py-1.5 flex-shrink-0"
-             style={{ background: t.colors.bgInput, borderBottom: `1px solid ${t.colors.border}` }}>
-          <input
-            ref={filePickRef}
-            type="file"
-            accept="video/mp4,video/avi,video/quicktime,video/x-matroska,image/jpeg,image/png"
-            style={{ display: 'none' }}
-            onChange={handleFilePicked}
-          />
-          <div className="flex flex-col gap-1.5 w-full">
-            {/* 파일 업로드 */}
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => filePickRef.current?.click()}
-                disabled={uploading}
-                style={{ ...t.btnPrimary, padding: '2px 8px', fontSize: 10, opacity: uploading ? 0.6 : 1 }}
-              >
-                <FileVideo size={10} /> {uploading ? (uploadPct < 100 ? `업로드 중... ${uploadPct}%` : '처리 중...') : '영상 파일 (mp4 / avi)'}
-              </button>
-              <span style={{ fontSize: 10, color: t.colors.textDim }}>선택 즉시 재생</span>
-            </div>
-            {/* RTSP / IP 카메라 */}
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setShowRtsp(v => !v)}
-                style={{ ...t.btnSecondary, padding: '2px 8px', fontSize: 10 }}
-              >
-                📱 핸드폰 카메라 (IP/RTSP)
-              </button>
-            </div>
-            {showRtsp && (
-              <div className="flex gap-1">
-                <input
-                  value={rtspUrl}
-                  onChange={e => setRtspUrl(e.target.value)}
-                  placeholder="rtsp://192.168.x.x:포트  또는  http://192.168.x.x:포트"
-                  style={{ ...t.input, flex: 1, fontSize: 10 }}
-                />
-                <button
-                  onClick={async () => {
-                    if (!rtspUrl.trim()) return
-                    setStartLoading(true)
-                    try {
-                      await api.startRtsp(cameraId, rtspUrl.trim())
-                      setIsStreaming(true)
-                      setShowFileInput(false)
-                      setShowRtsp(false)
-                    } catch (err: unknown) {
-                      const msg = (err as any)?.response?.data?.detail ?? '연결 실패'
-                      setError({ msg, hint: 'IP 카메라 앱의 주소를 확인하세요' })
-                    } finally { setStartLoading(false) }
-                  }}
-                  disabled={startLoading || !rtspUrl.trim()}
-                  style={{ ...t.btnPrimary, padding: '2px 8px', fontSize: 10 }}
-                >
-                  연결
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* hidden file input (파일 모드 idle 상태에서 사용) */}
+      <input
+        ref={filePickRef}
+        type="file"
+        accept="video/mp4,video/avi,video/quicktime,video/x-matroska,image/jpeg,image/png"
+        style={{ display: 'none' }}
+        onChange={handleFilePicked}
+      />
 
       {/* 에러 배너 */}
       {error && (
@@ -659,18 +602,90 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
               <p style={{ fontSize: 10, opacity: 0.4 }}>피드 숨김</p>
             </div>
           </div>
+        ) : sourceMode === 'file' ? (
+          /* 파일 모드 — 파일 선택 UI */
+          <div className="flex items-center justify-center h-full p-4">
+            <div className="text-center space-y-4" style={{ maxWidth: 260 }}>
+              <FileVideo size={36} style={{ margin: '0 auto', color: 'rgba(255,255,255,0.2)' }} />
+              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', margin: 0, fontWeight: 600 }}>
+                영상 파일을 업로드하세요
+              </p>
+              <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', margin: 0 }}>
+                MP4, AVI, MKV, MOV 지원
+              </p>
+              <button
+                onClick={() => filePickRef.current?.click()}
+                disabled={uploading}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, margin: '0 auto',
+                  background: t.colors.accent, color: '#fff',
+                  fontSize: 14, fontWeight: 700, padding: '10px 24px',
+                  borderRadius: 8, border: 'none',
+                  cursor: uploading ? 'not-allowed' : 'pointer',
+                  opacity: uploading ? 0.7 : 1,
+                  boxShadow: `0 0 20px ${t.colors.accent}60`,
+                }}>
+                <FileVideo size={16} />
+                {uploading ? (uploadPct < 100 ? `업로드 중... ${uploadPct}%` : '처리 중...') : '파일 선택'}
+              </button>
+              {/* RTSP / IP 카메라 */}
+              <div>
+                <button
+                  onClick={() => setShowRtsp(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, margin: '0 auto',
+                    background: 'transparent', color: 'rgba(255,255,255,0.45)',
+                    fontSize: 11, padding: '6px 12px',
+                    borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)',
+                    cursor: 'pointer',
+                  }}>
+                  📱 IP 카메라 / RTSP
+                </button>
+                {showRtsp && (
+                  <div className="flex gap-1 mt-2">
+                    <input
+                      value={rtspUrl}
+                      onChange={e => setRtspUrl(e.target.value)}
+                      placeholder="rtsp://192.168.x.x:포트"
+                      style={{ ...t.input, flex: 1, fontSize: 10 }}
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!rtspUrl.trim()) return
+                        setStartLoading(true)
+                        try {
+                          await api.startRtsp(cameraId, rtspUrl.trim())
+                          setIsStreaming(true)
+                          setShowRtsp(false)
+                        } catch (err: unknown) {
+                          const msg = (err as any)?.response?.data?.detail ?? '연결 실패'
+                          setError({ msg, hint: 'IP 카메라 앱의 주소를 확인하세요' })
+                        } finally { setStartLoading(false) }
+                      }}
+                      disabled={startLoading || !rtspUrl.trim()}
+                      style={{ ...t.btnPrimary, padding: '2px 8px', fontSize: 10 }}
+                    >
+                      연결
+                    </button>
+                  </div>
+                )}
+              </div>
+              <p style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)' }}>CAM {cameraId}</p>
+            </div>
+          </div>
         ) : (
+          /* 내장/외장 모드 — 카메라 시작 UI */
           <div className="flex items-center justify-center h-full">
             <div className="text-center space-y-3">
               <Camera size={32} style={{ margin: '0 auto', color: 'rgba(255,255,255,0.15)' }} />
               <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', margin: 0, fontWeight: 600 }}>
-                카메라가 꺼져 있습니다
+                {sourceMode === 'builtin' ? '내장 카메라' : '외장 카메라'}가 꺼져 있습니다
               </p>
               <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', margin: 0 }}>
-                아래 버튼을 눌러 감시를 시작하세요
+                {sourceMode === 'builtin' ? '노트북 내장 웹캠으로 감시를 시작합니다' : '아래 버튼을 눌러 감시를 시작하세요'}
               </p>
               <button
-                onClick={() => setShowCameraGuide(true)}
+                onClick={() => sourceMode === 'builtin' ? handleStart() : setShowCameraGuide(true)}
                 disabled={startLoading}
                 className="flex items-center gap-2 rounded-lg"
                 style={{
@@ -683,6 +698,7 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
                   cursor: startLoading ? 'not-allowed' : 'pointer',
                   opacity: startLoading ? 0.7 : 1,
                   boxShadow: `0 0 20px ${t.colors.success}60`,
+                  margin: '0 auto', display: 'flex',
                 }}>
                 <Play size={16} /> {startLoading ? '시작 중...' : '감시 시작하기'}
               </button>
@@ -882,10 +898,10 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
             </ol>
             <div style={{ marginBottom: 16 }}>
               <p style={{ fontSize: 12, color: t.colors.textDim, marginBottom: 6, fontWeight: 600 }}>
-                카메라 장치 선택
+                외장 카메라 장치 선택
               </p>
               <div className="flex gap-2">
-                {[0, 1, 2].map(id => (
+                {[1, 2, 3].map(id => (
                   <button
                     key={id}
                     onClick={() => setDeviceId(id)}
@@ -901,12 +917,12 @@ function CameraCell({ cameraId, onAlert, soundEnabled, t }: {
                       cursor: 'pointer',
                     }}
                   >
-                    {id === 0 ? '내장 (0)' : `외장 (${id})`}
+                    외장 ({id})
                   </button>
                 ))}
               </div>
               <p style={{ fontSize: 10, color: t.colors.textMuted, marginTop: 6 }}>
-                USB 카메라는 보통 외장 (1) 또는 (2)
+                USB 카메라가 여러 대면 번호를 다르게 지정하세요
               </p>
             </div>
             <p style={{ fontSize: 11, color: t.colors.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
@@ -993,6 +1009,7 @@ export default function LivePage() {
   const t = useTheme()
   const { current: metrics, updateMetrics } = useMetricsStore()
 
+  const [sourceMode, setSourceMode] = useState<SourceMode>('external')
   const [cameras, setCameras] = useState<string[]>(['0'])
   const [newCamId, setNewCamId] = useState('')
   const [alerts, setAlerts] = useState<DetectionAlert[]>([])
@@ -1070,7 +1087,15 @@ export default function LivePage() {
     setToasts([])
   }, [])
 
+  const handleModeChange = (mode: SourceMode) => {
+    cameras.forEach(id => api.removeCameraById(id).catch(() => {}))
+    setSourceMode(mode)
+    setCameras(['0'])
+    setNewCamId('')
+  }
+
   const addCamera = () => {
+    if (sourceMode !== 'external') return
     const id = newCamId.trim()
     if (!id || cameras.includes(id)) return
     setCameras(prev => [...prev, id])
@@ -1144,6 +1169,33 @@ export default function LivePage() {
         {/* 전역 에러 배너 */}
         <AppNotifBanner t={t} />
 
+        {/* 소스 모드 탭 */}
+        <div className="flex items-center gap-1 px-3 py-1.5 flex-shrink-0"
+             style={{ background: t.colors.bgPanel, borderBottom: `1px solid ${t.colors.border}` }}>
+          <span style={{ fontSize: 10, color: t.colors.textDim, marginRight: 4 }}>소스 모드</span>
+          {([
+            { mode: 'builtin' as SourceMode, label: '내장 카메라', icon: '🖥️' },
+            { mode: 'external' as SourceMode, label: '외장 카메라', icon: '📷' },
+            { mode: 'file' as SourceMode, label: '파일 재생', icon: '🎬' },
+          ]).map(({ mode, label, icon }) => (
+            <button
+              key={mode}
+              onClick={() => handleModeChange(mode)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '4px 14px', borderRadius: 6, fontSize: 12,
+                fontWeight: sourceMode === mode ? 700 : 400,
+                background: sourceMode === mode ? t.colors.accent + '25' : 'transparent',
+                color: sourceMode === mode ? t.colors.accent : t.colors.textDim,
+                border: `1px solid ${sourceMode === mode ? t.colors.accent + '60' : t.colors.border}`,
+                cursor: 'pointer',
+              }}
+            >
+              {icon} {label}
+            </button>
+          ))}
+        </div>
+
         <div className="flex-1 flex gap-px overflow-hidden" style={{ background: t.colors.border }}>
           {/* ── 좌측: 카메라 관리 ── */}
           <div className="flex flex-col gap-px flex-shrink-0" style={{ width: 180 }}>
@@ -1156,23 +1208,25 @@ export default function LivePage() {
                   <span style={{ fontSize: 11, fontFamily: 'monospace', color: t.colors.text, flex: 1 }}>
                     CAM {id}
                   </span>
-                  {cameras.length > 1 && (
+                  {sourceMode === 'external' && cameras.length > 1 && (
                     <button onClick={() => removeCamera(id)} style={{ color: t.colors.textDim }}>
                       <X size={10} />
                     </button>
                   )}
                 </div>
               ))}
-              <div className="flex gap-1 mt-2">
-                <input
-                  value={newCamId}
-                  onChange={e => setNewCamId(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && addCamera()}
-                  placeholder="장치 ID (0,1,2...)"
-                  style={{ ...t.input, flex: 1, fontSize: 10 }}
-                />
-                <button onClick={addCamera} style={t.btnPrimary}><Plus size={11} /></button>
-              </div>
+              {sourceMode === 'external' && (
+                <div className="flex gap-1 mt-2">
+                  <input
+                    value={newCamId}
+                    onChange={e => setNewCamId(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addCamera()}
+                    placeholder="장치 ID (0,1,2...)"
+                    style={{ ...t.input, flex: 1, fontSize: 10 }}
+                  />
+                  <button onClick={addCamera} style={t.btnPrimary}><Plus size={11} /></button>
+                </div>
+              )}
             </div>
 
             {/* AL 빠른 트리거 */}
@@ -1250,7 +1304,7 @@ export default function LivePage() {
             }}
           >
             {cameras.map(id => (
-              <CameraCell key={id} cameraId={id} onAlert={handleAlert} soundEnabled={soundEnabled} t={t} />
+              <CameraCell key={id} cameraId={id} onAlert={handleAlert} soundEnabled={soundEnabled} t={t} sourceMode={sourceMode} />
             ))}
           </div>
 
